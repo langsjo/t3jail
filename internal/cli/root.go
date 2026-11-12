@@ -13,7 +13,7 @@ import (
 // Environment variables set by the Nix wrapper to locate runtime assets.
 const (
 	envFirmware = "T3JAIL_FIRMWARE"
-	envFlake    = "T3JAIL_FLAKE"
+	envImageDrv = "T3JAIL_IMAGE_DRV"
 )
 
 func NewRoot() *cobra.Command {

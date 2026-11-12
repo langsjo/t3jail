@@ -77,12 +77,14 @@ func initInstance(inst paths.Instance, diskSize config.ByteSize, image string) e
 }
 
 func buildImage() (string, error) {
-	flake := os.Getenv(envFlake)
-	if flake == "" {
-		return "", fmt.Errorf("%s is not set; pass --image or run t3jail through its Nix package", envFlake)
+	// The Nix package records the image derivation, not its output, so the
+	// multi-gigabyte image is only built when a disk is created.
+	drv := os.Getenv(envImageDrv)
+	if drv == "" {
+		return "", fmt.Errorf("%s is not set; pass --image or run t3jail through its Nix package", envImageDrv)
 	}
 	fmt.Println("Building the base VM image (this takes a while the first time)...")
-	cmd := exec.Command("nix", "build", "--no-link", "--print-out-paths", flake+"#guest-image")
+	cmd := exec.Command("nix", "build", "--no-link", "--print-out-paths", drv+"^out")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
