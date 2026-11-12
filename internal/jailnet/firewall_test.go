@@ -59,9 +59,9 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: []netrules.PortRange{{First: 22, Last: 22}}},
 		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: []netrules.PortRange{{First: 8000, Last: 8100}}},
 	}))
-	keep := netrules.Destination{netip.MustParsePrefix("140.82.121.4/32"), netrules.PortRange{First: 443, Last: 443}}
-	gone := netrules.Destination{netip.MustParsePrefix("140.82.121.5/32"), netrules.PortRange{First: 443, Last: 443}}
-	v6 := netrules.Destination{netip.MustParsePrefix("2606:50c0:8000::154/128"), netrules.PortRange{First: 22, Last: 22}}
+	keep := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.4/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
+	gone := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.5/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
+	v6 := netrules.Destination{Prefix: netip.MustParsePrefix("2606:50c0:8000::154/128"), Ports: netrules.PortRange{First: 22, Last: 22}}
 	must(fw.AddDNSAllows([]netrules.Destination{keep, gone, v6}))
 	must(fw.RemoveDNSAllows([]netrules.Destination{gone}))
 

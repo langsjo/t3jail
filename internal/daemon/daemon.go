@@ -26,6 +26,7 @@ import (
 	"github.com/langsjo/t3jail/internal/chv"
 	"github.com/langsjo/t3jail/internal/control"
 	"github.com/langsjo/t3jail/internal/guestabi"
+	"github.com/langsjo/t3jail/internal/hostnets"
 	"github.com/langsjo/t3jail/internal/jailnet"
 	"github.com/langsjo/t3jail/internal/paths"
 	"github.com/langsjo/t3jail/internal/vmspec"
@@ -65,6 +66,8 @@ type Daemon struct {
 	abi  guestabi.ABI
 	log  *slog.Logger
 	ch   *chv.Client
+	// helper is the API of the netns helper that owns the network filter.
+	helper *control.Client
 
 	mu         sync.Mutex
 	state      control.State
@@ -83,6 +86,7 @@ func New(inst paths.Instance, spec RunSpec, self string, log *slog.Logger) *Daem
 		abi:     guestabi.Get(),
 		log:     log,
 		ch:      chv.NewClient(inst.CHAPISocket()),
+		helper:  control.NewClient(inst.NetnsSocket()),
 		state:   control.StateBooting,
 		started: time.Now(),
 		stopReq: make(chan control.StopRequest, 1),
@@ -123,6 +127,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		<-d.vmDone
 		return err
 	}
+	go d.watchHostNets(ctx)
 	if err := d.startConsole(); err != nil {
 		d.log.Error("serial console unavailable", "err", err)
 	}
@@ -185,8 +190,18 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 	for _, sock := range []string{d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
 		os.Remove(sock)
 	}
+	hostNets, err := hostnets.Current()
+	if err != nil {
+		return nil, fmt.Errorf("reading host networks: %w", err)
+	}
 	specPath := filepath.Join(d.inst.Runtime, "helper.json")
-	data, err := json.Marshal(jailnet.HelperSpec{Launch: launch})
+	data, err := json.Marshal(jailnet.HelperSpec{
+		Launch:      launch,
+		NetworkList: d.inst.NetworkList(),
+		DNSLog:      d.inst.DNSLog(),
+		APISocket:   d.inst.NetnsSocket(),
+		HostNets:    hostNets,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -281,6 +296,7 @@ func (d *Daemon) serveControl() (*http.Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/status", control.Handler(d.status))
 	mux.Handle("POST /v1/stop", control.Handler(d.stop))
+	mux.Handle("POST /v1/net/reload", control.Handler(d.reloadNetwork))
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(l)
 	return srv, nil
@@ -396,7 +412,7 @@ func (d *Daemon) setState(s control.State) {
 }
 
 func (d *Daemon) removeSockets() {
-	for _, s := range []string{d.inst.ControlSocket(), d.inst.ConsoleSocket(), d.inst.T3Socket(), d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
+	for _, s := range []string{d.inst.ControlSocket(), d.inst.NetnsSocket(), d.inst.ConsoleSocket(), d.inst.T3Socket(), d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
 		os.Remove(s)
 	}
 }

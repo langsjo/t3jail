@@ -1,6 +1,5 @@
 // Package jailnet runs inside the user+network namespace created by pasta. It
-// owns the VM's only network path: a tap device whose traffic is routed (and,
-// once rules are loaded, filtered) through this namespace before pasta turns
+// owns the VM's only network path: a tap device whose traffic is routed and filtered through this namespace before pasta turns
 // it into ordinary host sockets.
 package jailnet
 
@@ -8,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,11 +27,24 @@ const (
 	// DNSForward is the address pasta maps to the host's resolver. It is only
 	// reachable from inside this namespace, never from the guest.
 	DNSForward = "169.254.53.53"
+	// Namespace side of pasta. Pinned so that it cannot collide with the
+	// guest link, whatever addresses the host uses. TEST-NET-2 is blocked as a
+	// destination anyway.
+	pastaAddr4    = "198.51.100.2"
+	pastaGateway4 = "198.51.100.1"
 )
 
 // HelperSpec is handed from the daemon to the helper as a JSON file.
 type HelperSpec struct {
-	Launch chv.LaunchSpec
+	Launch      chv.LaunchSpec
+	NetworkList string
+	DNSLog      string
+	// APISocket is where the helper serves the API the daemon uses to
+	// change the filter while the VM runs.
+	APISocket string
+	// HostNets is the initial set of host networks; the daemon sends
+	// updates through the API.
+	HostNets []netip.Prefix
 }
 
 // PastaArgs returns the pasta command line that creates the namespaces and
@@ -43,6 +56,7 @@ func PastaArgs(helper ...string) []string {
 		"--tcp-ports", "none", "--udp-ports", "none",
 		"--tcp-ns", "none", "--udp-ns", "none",
 		"--map-host-loopback", "none",
+		"--address", pastaAddr4, "--netmask", "24", "--gateway", pastaGateway4,
 		"--dns-forward", DNSForward,
 		"--",
 	}
@@ -69,6 +83,9 @@ func RunHelper(specPath string) error {
 	}
 	if err := configureLinks(guestabi.Get()); err != nil {
 		return err
+	}
+	if _, err := startJail(guestabi.Get(), spec); err != nil {
+		return fmt.Errorf("network filter: %w", err)
 	}
 
 	launch := spec.Launch

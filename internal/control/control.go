@@ -67,15 +67,21 @@ func NewClient(socket string) *Client {
 
 func (c *Client) Status(ctx context.Context) (Status, error) {
 	var s Status
-	err := c.do(ctx, http.MethodGet, "/v1/status", nil, &s)
+	err := c.Call(ctx, http.MethodGet, "/v1/status", nil, &s)
 	return s, err
 }
 
 func (c *Client) Stop(ctx context.Context, req StopRequest) error {
-	return c.do(ctx, http.MethodPost, "/v1/stop", req, nil)
+	return c.Call(ctx, http.MethodPost, "/v1/stop", req, nil)
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+// ReloadNetwork makes the running VM use the current network.list.
+func (c *Client) ReloadNetwork(ctx context.Context) error {
+	return c.Call(ctx, http.MethodPost, "/v1/net/reload", nil, nil)
+}
+
+// Call sends body (if not nil) as JSON and decodes the response into out.
+func (c *Client) Call(ctx context.Context, method, path string, body, out any) error {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
