@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sys/unix"
 
 	"github.com/langsjo/t3jail/internal/control"
 	"github.com/langsjo/t3jail/internal/netrules"
@@ -263,17 +261,11 @@ type networkLists struct {
 // saves them if fn succeeds. Files are replaced atomically so the helper never
 // reads half a list.
 func withNetworkLists(inst paths.Instance, fn func(networkLists) error) error {
-	if err := inst.Ensure(); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(filepath.Join(inst.Runtime, "network.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	unlock, err := lockRuntime(inst, "network.lock")
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return err
-	}
+	defer unlock()
 
 	if err := ensureNetworkList(inst); err != nil {
 		return err

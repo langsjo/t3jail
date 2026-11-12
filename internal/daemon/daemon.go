@@ -74,6 +74,12 @@ type Daemon struct {
 	guestReady bool
 	started    time.Time
 
+	// runCtx ends when the daemon stops; per-share virtiofsd processes live
+	// under it.
+	runCtx   context.Context
+	sharesMu sync.Mutex
+	shares   map[string]*share // by guest path
+
 	stopReq chan control.StopRequest
 	vmDone  chan struct{}
 }
@@ -90,6 +96,7 @@ func New(inst paths.Instance, spec RunSpec, self string, log *slog.Logger) *Daem
 		state:   control.StateBooting,
 		started: time.Now(),
 		stopReq: make(chan control.StopRequest, 1),
+		shares:  map[string]*share{},
 		vmDone:  make(chan struct{}),
 	}
 }
@@ -98,6 +105,7 @@ func New(inst paths.Instance, spec RunSpec, self string, log *slog.Logger) *Daem
 func (d *Daemon) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	d.runCtx = ctx
 
 	lock, err := lockFile(d.inst.DaemonLock())
 	if err != nil {
@@ -109,10 +117,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	os.Remove(d.inst.EphemeralNetworkList())
 	defer os.Remove(d.inst.EphemeralNetworkList())
 
+	if err := d.startPersistedShares(); err != nil {
+		return err
+	}
 	if err := d.writeMeta(); err != nil {
 		return err
 	}
-	if err := startVirtiofsd(ctx, d.inst.FSSocket(d.abi.MetaTag), d.inst.MetaDir(), true, d.log); err != nil {
+	if err := startVirtiofsd(ctx, d.inst.FSSocket(d.abi.MetaTag), d.inst.MetaDir(), true, nil); err != nil {
 		return err
 	}
 
@@ -174,7 +185,11 @@ func (d *Daemon) writeMeta() error {
 	if err := writeFileAtomic(filepath.Join(d.inst.MetaDir(), d.abi.AuthorizedKeysFile), pub, 0o644); err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(d.inst.MetaDir(), d.abi.MountsManifestFile), []byte("[]\n"), 0o644)
+	manifest, err := d.manifest()
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(d.inst.MetaDir(), d.abi.MountsManifestFile), manifest, 0o644)
 }
 
 func (d *Daemon) startVM() (*exec.Cmd, error) {
@@ -189,7 +204,7 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 		CPUs:         res.CPUs,
 		MaxCPUs:      res.MaxCPUs,
 		Memory:       res.SplitMemory(),
-		Shares:       []chv.Share{{ID: metaShareID, Tag: d.abi.MetaTag, Socket: d.inst.FSSocket(d.abi.MetaTag)}},
+		Shares:       d.bootShares(),
 	}
 	for _, sock := range []string{d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
 		os.Remove(sock)
@@ -302,6 +317,9 @@ func (d *Daemon) serveControl() (*http.Server, error) {
 	mux.Handle("GET /v1/status", control.Handler(d.status))
 	mux.Handle("POST /v1/stop", control.Handler(d.stop))
 	mux.Handle("POST /v1/net/reload", control.Handler(d.reloadNetwork))
+	mux.Handle("GET /v1/mounts", control.Handler(d.listMounts))
+	mux.Handle("POST /v1/mounts", control.Handler(d.addMount))
+	mux.Handle("POST /v1/mounts/remove", control.Handler(d.removeMount))
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(l)
 	return srv, nil
@@ -423,9 +441,10 @@ func (d *Daemon) removeSockets() {
 }
 
 // startVirtiofsd shares dir under the socket; it exits when the VM disconnects.
-func startVirtiofsd(ctx context.Context, socket, dir string, readOnly bool, log *slog.Logger) error {
+func startVirtiofsd(ctx context.Context, socket, dir string, readOnly bool, extraArgs []string) error {
 	os.Remove(socket)
 	args := []string{"--socket-path", socket, "--shared-dir", dir, "--sandbox", "namespace", "--cache", "never"}
+	args = append(args, extraArgs...)
 	if readOnly {
 		args = append(args, "--readonly")
 	}

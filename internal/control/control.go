@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"syscall"
 	"time"
+
+	"github.com/langsjo/t3jail/internal/mounts"
 )
 
 // State of the VM as seen by the daemon.
@@ -37,6 +39,11 @@ type Status struct {
 	BootMemory uint64    `json:"bootMemory"`
 	T3URL      string    `json:"t3Url"`
 	Started    time.Time `json:"started"`
+}
+
+// RemoveMountRequest detaches the share mounted at GuestPath.
+type RemoveMountRequest struct {
+	GuestPath string `json:"guestPath"`
 }
 
 type StopRequest struct {
@@ -73,6 +80,24 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 
 func (c *Client) Stop(ctx context.Context, req StopRequest) error {
 	return c.Call(ctx, http.MethodPost, "/v1/stop", req, nil)
+}
+
+// AddMount attaches a share to the running VM and returns it with the host
+// path resolved. The guest still has to mount it.
+func (c *Client) AddMount(ctx context.Context, m mounts.Mount) (mounts.Mount, error) {
+	var out mounts.Mount
+	err := c.Call(ctx, http.MethodPost, "/v1/mounts", m, &out)
+	return out, err
+}
+
+func (c *Client) RemoveMount(ctx context.Context, guestPath string) error {
+	return c.Call(ctx, http.MethodPost, "/v1/mounts/remove", RemoveMountRequest{GuestPath: guestPath}, nil)
+}
+
+func (c *Client) Mounts(ctx context.Context) ([]mounts.Mount, error) {
+	var out []mounts.Mount
+	err := c.Call(ctx, http.MethodGet, "/v1/mounts", nil, &out)
+	return out, err
 }
 
 // ReloadNetwork makes the running VM use the current network.list.
