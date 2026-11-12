@@ -44,6 +44,10 @@ func TestArgsFirmwareBoot(t *testing.T) {
 	if got := argValue(t, args, "--cpus"); got != "boot=2,max=8" {
 		t.Errorf("--cpus = %q", got)
 	}
+	// The id is how `disk resize` addresses the disk while running.
+	if got := argValue(t, args, "--disk"); got != "path=/s/disk.raw,image_type=raw,id=disk0" {
+		t.Errorf("--disk = %q", got)
+	}
 	if got := argValue(t, args, "--firmware"); got != "/fw/CLOUDHV.fd" {
 		t.Errorf("--firmware = %q", got)
 	}
@@ -144,5 +148,25 @@ func TestClientInfoDecodes(t *testing.T) {
 	}
 	if info.State != "Running" || info.MemoryActualSize != 4<<30 || info.Config.CPUs.BootVCPUs != 2 || info.Config.Fs[0].Tag != "t3jail-meta" {
 		t.Errorf("info = %+v", info)
+	}
+}
+
+func TestClientResizeDisk(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	c := fakeCH(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	if err := c.ResizeDisk(context.Background(), DiskID, 70<<30); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "PUT /api/v1/vm.resize-disk" {
+		t.Errorf("request = %q", gotPath)
+	}
+	if gotBody["id"] != "disk0" || gotBody["desired_size"] != float64(70<<30) {
+		t.Errorf("body = %v", gotBody)
 	}
 }

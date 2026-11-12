@@ -38,6 +38,9 @@ type Share struct {
 	Socket string
 }
 
+// DiskID names the VM disk in cloud-hypervisor's API.
+const DiskID = "disk0"
+
 // FsQueueSize is the virtio-fs queue size used for every share.
 const FsQueueSize = 1024
 
@@ -50,7 +53,7 @@ func Args(s LaunchSpec) ([]string, error) {
 		"--api-socket", "path=" + s.APISocket,
 		"--cpus", fmt.Sprintf("boot=%d,max=%d", s.CPUs, s.MaxCPUs),
 		"--memory", memoryArg(s.Memory),
-		"--disk", kv("path", s.Disk, "image_type", "raw"),
+		"--disk", kv("path", s.Disk, "image_type", "raw", "id", DiskID),
 		"--serial", "socket=" + s.SerialSocket,
 		"--console", "off",
 		"--vsock", kv("cid", strconv.FormatUint(uint64(s.VsockCID), 10), "socket", s.VsockSocket),

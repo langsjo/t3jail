@@ -67,3 +67,20 @@ func TestGrow(t *testing.T) {
 		t.Fatal("shrinking accepted")
 	}
 }
+
+func TestCheckGrow(t *testing.T) {
+	const gib = 1 << 30
+	if err := CheckGrow(64*gib, 70*gib); err != nil {
+		t.Errorf("growing: %v", err)
+	}
+	if err := CheckGrow(64*gib, 64*gib); err != nil {
+		t.Errorf("same size: %v", err)
+	}
+	if err := CheckGrow(64*gib, 32*gib); err == nil {
+		t.Error("shrinking accepted")
+	}
+	// cloud-hypervisor rejects sizes that are not whole sectors.
+	if err := CheckGrow(64*gib, 64*gib+100); err == nil {
+		t.Error("size that is not a whole number of sectors accepted")
+	}
+}

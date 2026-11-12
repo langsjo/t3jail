@@ -82,6 +82,12 @@ func (c *Client) Resize(ctx context.Context, vcpus int, ram uint64) error {
 	return c.do(ctx, http.MethodPut, "vm.resize", body, nil)
 }
 
+// ResizeDisk grows the disk image and tells the guest its new size.
+func (c *Client) ResizeDisk(ctx context.Context, id string, size uint64) error {
+	body := map[string]any{"id": id, "desired_size": size}
+	return c.do(ctx, http.MethodPut, "vm.resize-disk", body, nil)
+}
+
 func (c *Client) AddFs(ctx context.Context, sh Share) error {
 	body := map[string]any{
 		"tag": sh.Tag, "socket": sh.Socket, "id": sh.ID,

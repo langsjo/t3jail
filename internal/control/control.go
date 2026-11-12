@@ -47,6 +47,11 @@ type ResizeRequest struct {
 	Memory uint64 `json:"memory"`
 }
 
+// DiskResizeRequest grows the running VM's disk to Size bytes.
+type DiskResizeRequest struct {
+	Size uint64 `json:"size"`
+}
+
 // RemoveMountRequest detaches the share mounted at GuestPath.
 type RemoveMountRequest struct {
 	GuestPath string `json:"guestPath"`
@@ -108,6 +113,10 @@ func (c *Client) Mounts(ctx context.Context) ([]mounts.Mount, error) {
 
 func (c *Client) Resize(ctx context.Context, req ResizeRequest) error {
 	return c.Call(ctx, http.MethodPost, "/v1/resize", req, nil)
+}
+
+func (c *Client) ResizeDisk(ctx context.Context, req DiskResizeRequest) error {
+	return c.Call(ctx, http.MethodPost, "/v1/disk/resize", req, nil)
 }
 
 // ReloadNetwork makes the running VM use the current network.list.

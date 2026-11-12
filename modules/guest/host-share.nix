@@ -16,6 +16,8 @@ let
       util-linux
       jq
       psmisc
+      cloud-utils.guest
+      e2fsprogs
     ];
     text = ''
       META_DIR=${lib.escapeShellArg abi.metaMountPoint}

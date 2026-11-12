@@ -336,6 +336,7 @@ func (d *Daemon) serveControl() (*http.Server, error) {
 	mux.Handle("POST /v1/stop", control.Handler(d.stop))
 	mux.Handle("POST /v1/net/reload", control.Handler(d.reloadNetwork))
 	mux.Handle("POST /v1/resize", control.Handler(d.resize))
+	mux.Handle("POST /v1/disk/resize", control.Handler(d.resizeDisk))
 	mux.Handle("GET /v1/mounts", control.Handler(d.listMounts))
 	mux.Handle("POST /v1/mounts", control.Handler(d.addMount))
 	mux.Handle("POST /v1/mounts/remove", control.Handler(d.removeMount))

@@ -75,15 +75,29 @@ func CopySparse(src, dst string, size int64) (err error) {
 	return os.Rename(tmp, dst)
 }
 
-// Grow extends an existing disk file to size. Shrinking is refused because it
-// would cut off the guest's filesystem.
+// Grow extends an existing disk file to size.
 func Grow(path string, size int64) error {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	if size < fi.Size() {
-		return fmt.Errorf("cannot shrink the disk from %d to %d bytes", fi.Size(), size)
+	if err := CheckGrow(fi.Size(), size); err != nil {
+		return err
 	}
 	return os.Truncate(path, size)
+}
+
+// SectorSize is the unit disk sizes must be a multiple of.
+const SectorSize = 512
+
+// CheckGrow validates growing a disk from current to size bytes. Shrinking is
+// refused because it would cut off the guest's filesystem.
+func CheckGrow(current, size int64) error {
+	switch {
+	case size%SectorSize != 0:
+		return fmt.Errorf("the disk size must be a multiple of %d bytes", SectorSize)
+	case size < current:
+		return fmt.Errorf("cannot shrink the disk from %d to %d bytes", current, size)
+	}
+	return nil
 }

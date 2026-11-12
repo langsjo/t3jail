@@ -2,7 +2,7 @@
 # are prepended by module.nix.
 
 usage() {
-  echo "usage: t3jail-guest host-setup | mount <tag> <path> <ro|rw> | umount <path> [--lazy]" >&2
+  echo "usage: t3jail-guest host-setup | mount <tag> <path> <ro|rw> | umount <path> [--lazy] | grow-root <bytes>" >&2
   exit 2
 }
 
@@ -45,6 +45,25 @@ umount_share() {
   fi
 }
 
+# After the host grew the disk to <bytes>: wait until the kernel sees the new
+# size, then grow the root partition and filesystem while mounted.
+grow_root() {
+  local bytes=$1 part disk partnum tries=0
+  part=$(findmnt -n -o SOURCE /)
+  disk=/dev/$(lsblk -ndo PKNAME "$part")
+  partnum=$(<"/sys/class/block/${part#/dev/}/partition")
+  until (($(blockdev --getsize64 "$disk") >= bytes)); do
+    if ((++tries > 100)); then
+      echo "t3jail-guest: $disk did not grow to $bytes bytes" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  # growpart exits 1 when the partition already fills the disk.
+  growpart "$disk" "$partnum" || [[ $? -eq 1 ]]
+  resize2fs "$part"
+}
+
 host_setup() {
   install -d -m 0755 /run/t3jail/ssh
   if [[ -f $KEYS_SRC ]]; then
@@ -71,6 +90,10 @@ mount)
 umount)
   [[ $# -ge 2 ]] || usage
   umount_share "$2" "${3:-}"
+  ;;
+grow-root)
+  [[ $# -eq 2 && $2 =~ ^[0-9]+$ ]] || usage
+  grow_root "$2"
   ;;
 *) usage ;;
 esac
