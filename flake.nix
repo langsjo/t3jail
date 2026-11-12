@@ -2,7 +2,7 @@
   description = "Run the T3 Code server in a network-filtered, persistent NixOS VM";
 
   outputs =
-    { nixpkgs, ... }@inputs:
+    { self, nixpkgs, ... }@inputs:
     let
       lib = nixpkgs.lib;
       systems = [
@@ -15,6 +15,14 @@
       nixosModules.guest = ./modules/guest;
 
       packages = forAllSystems (pkgs: import ./packages { inherit pkgs inputs; });
+
+      # Needs KVM inside the test VM (nested virtualization).
+      checks = forAllSystems (pkgs: {
+        e2e = import ./tests/e2e.nix {
+          inherit pkgs;
+          inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) t3jail guest-image rescue;
+        };
+      });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShellNoCC {

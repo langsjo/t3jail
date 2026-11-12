@@ -14,6 +14,13 @@
   guest-image,
   rescue,
 }:
+let
+  setDrv =
+    name: package:
+    lib.optionalString (
+      package != null
+    ) "--set-default ${name} ${builtins.unsafeDiscardOutputDependency package.drvPath}";
+in
 buildGoModule {
   pname = "t3jail";
   version = "0.1.0";
@@ -36,7 +43,9 @@ buildGoModule {
 
   # The image and the rescue system are referenced by their derivations, not
   # their outputs, so they are only built when `t3jail init` creates a disk or
-  # `start --rescue` needs it.
+  # `start --rescue` needs it. Without them (null), the closure holds no
+  # derivations; `init --image` and T3JAIL_RESCUE_DRV supply them instead, as
+  # the e2e test does.
   postInstall = ''
     wrapProgram $out/bin/t3jail \
       --prefix PATH : ${
@@ -52,8 +61,8 @@ buildGoModule {
         ]
       } \
       --set-default T3JAIL_FIRMWARE ${OVMF-cloud-hypervisor.fd}/FV/CLOUDHV.fd \
-      --set-default T3JAIL_IMAGE_DRV ${builtins.unsafeDiscardOutputDependency guest-image.drvPath} \
-      --set-default T3JAIL_RESCUE_DRV ${builtins.unsafeDiscardOutputDependency rescue.drvPath}
+      ${setDrv "T3JAIL_IMAGE_DRV" guest-image} \
+      ${setDrv "T3JAIL_RESCUE_DRV" rescue}
   '';
 
   meta = {

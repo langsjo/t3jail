@@ -21,8 +21,14 @@ func buildRescue(inst paths.Instance) (*daemon.RescueBoot, error) {
 	if err := os.MkdirAll(inst.GCRoots(), 0o700); err != nil {
 		return nil, err
 	}
+	// The package wrapper passes a derivation; tests pass an already built
+	// output.
+	installable := drv
+	if strings.HasSuffix(drv, ".drv") {
+		installable += "^out"
+	}
 	fmt.Println("Building the rescue system...")
-	cmd := exec.Command("nix", "build", "--out-link", filepath.Join(inst.GCRoots(), "rescue"), "--print-out-paths", drv+"^out")
+	cmd := exec.Command("nix", "build", "--out-link", filepath.Join(inst.GCRoots(), "rescue"), "--print-out-paths", installable)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
