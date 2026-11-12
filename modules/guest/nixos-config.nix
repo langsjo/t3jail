@@ -41,8 +41,11 @@ in
       git init -q -b main
       # Lets `t3jail config push` update the checked-out branch.
       git config receive.denyCurrentBranch updateInstead
+      # AGENTS.md tells agents to commit here; without an identity they can't.
+      git config user.name t3jail
+      git config user.email t3jail@localhost
       git add -A
-      git -c user.name=t3jail -c user.email=t3jail@localhost commit -q -m "Initial configuration"
+      git commit -q -m "Initial configuration"
     '';
   };
 }
