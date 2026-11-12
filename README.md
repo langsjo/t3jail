@@ -67,7 +67,8 @@ Every command has `--help`.
 
 The VM reaches only destinations on the allowlist; everything else fails
 immediately (DNS answers REFUSED, connections are reset). Initially allowed:
-`cache.nixos.org`, `channels.nixos.org`, `releases.nixos.org`, `*.github.com`,
+`cache.nixos.org`, `channels.nixos.org`, `releases.nixos.org`,
+`tarballs.nixos.org`, `*.github.com`,
 `*.githubusercontent.com`.
 
     t3jail net allow registry.npmjs.org      # until the VM stops

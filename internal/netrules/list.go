@@ -27,6 +27,8 @@ const DefaultList = `# Network allowlist for the t3jail VM. One entry per line; 
 # Needed to rebuild NixOS inside the VM.
 cache.nixos.org
 channels.nixos.org
+releases.nixos.org
+tarballs.nixos.org
 *.github.com
 *.githubusercontent.com
 `

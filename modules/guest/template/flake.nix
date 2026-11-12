@@ -5,8 +5,11 @@
   description = "t3jail VM configuration";
 
   inputs = {
-    t3jail.url = "github:langsjo/t3jail";
-    nixpkgs.follows = "t3jail/nixpkgs";
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+    t3jail = {
+      url = "github:langsjo/t3jail";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =

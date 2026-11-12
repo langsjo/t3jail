@@ -41,19 +41,21 @@ let
     root = "root";
     nodes = {
       root.inputs = {
+        nixpkgs = "nixpkgs";
         t3jail = "t3jail";
-        nixpkgs = [
-          "t3jail"
-          "nixpkgs"
-        ];
       };
       t3jail = {
-        inputs.nixpkgs = "nixpkgs";
+        inputs.nixpkgs = [ "nixpkgs" ];
         locked = t3jailLocked;
         original = repo;
       };
+      # The nixpkgs this image was built from, which is in its store.
       nixpkgs = {
-        inherit ((lib.importJSON ../flake.lock).nodes.nixpkgs) locked original;
+        inherit ((lib.importJSON ../flake.lock).nodes.nixpkgs) locked;
+        original = {
+          type = "tarball";
+          inherit ((import ../modules/guest/template/flake.nix).inputs.nixpkgs) url;
+        };
       };
     };
   };
