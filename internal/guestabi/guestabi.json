@@ -1,0 +1,19 @@
+{
+  "guestUser": "agent",
+  "guestUid": 1000,
+  "hostname": "t3jail",
+  "gateway4": "192.0.2.1",
+  "guest4": "192.0.2.2",
+  "prefixLen4": 24,
+  "gateway6": "2001:db8:7a3::1",
+  "guest6": "2001:db8:7a3::2",
+  "prefixLen6": 64,
+  "vsockCID": 3,
+  "vsockSSHPort": 22,
+  "vsockT3Port": 3773,
+  "t3Port": 3773,
+  "metaTag": "t3jail-meta",
+  "metaMountPoint": "/run/t3jail/host",
+  "authorizedKeysFile": "authorized_keys",
+  "mountsManifestFile": "mounts.json"
+}
