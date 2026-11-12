@@ -52,6 +52,9 @@ func initInstance(inst paths.Instance, diskSize config.ByteSize, image string) e
 	if diskSize == 0 {
 		diskSize = cfg.DiskSize
 	}
+	if err := ensureNetworkList(inst); err != nil {
+		return err
+	}
 	if _, err := sshx.EnsureKey(inst.SSHKey()); err != nil {
 		return fmt.Errorf("creating SSH key: %w", err)
 	}

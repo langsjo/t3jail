@@ -45,6 +45,9 @@ func newStartCmd() *cobra.Command {
 					return err
 				}
 			}
+			if err := ensureNetworkList(inst); err != nil {
+				return err
+			}
 			cfg, err := config.Load(inst.ConfigFile())
 			if err != nil {
 				return err
