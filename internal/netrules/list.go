@@ -82,6 +82,9 @@ func (l *List) Remove(e Entry) bool {
 	return true
 }
 
+// Contains reports whether an identical entry exists.
+func (l *List) Contains(e Entry) bool { return l.index(e) >= 0 }
+
 func (l *List) index(e Entry) int {
 	want := e.String()
 	for i, ln := range l.lines {
