@@ -105,6 +105,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer lock.Close()
 
+	// Entries allowed only for the previous run end with it.
+	os.Remove(d.inst.EphemeralNetworkList())
+	defer os.Remove(d.inst.EphemeralNetworkList())
+
 	if err := d.writeMeta(); err != nil {
 		return err
 	}
@@ -196,11 +200,12 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 	}
 	specPath := filepath.Join(d.inst.Runtime, "helper.json")
 	data, err := json.Marshal(jailnet.HelperSpec{
-		Launch:      launch,
-		NetworkList: d.inst.NetworkList(),
-		DNSLog:      d.inst.DNSLog(),
-		APISocket:   d.inst.NetnsSocket(),
-		HostNets:    hostNets,
+		Launch:               launch,
+		NetworkList:          d.inst.NetworkList(),
+		EphemeralNetworkList: d.inst.EphemeralNetworkList(),
+		DNSLog:               d.inst.DNSLog(),
+		APISocket:            d.inst.NetnsSocket(),
+		HostNets:             hostNets,
 	})
 	if err != nil {
 		return nil, err

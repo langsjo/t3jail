@@ -102,24 +102,18 @@ func (f *Firewall) SetHostNets(prefixes []netip.Prefix) error {
 	return f.Apply(replaceSet("hostnets4", v4) + replaceSet("hostnets6", v6))
 }
 
-// SetPrefixAllows replaces the explicit address allows.
-func (f *Firewall) SetPrefixAllows(rules []netrules.PrefixRule) error {
-	var elems []netrules.Destination
-	for _, r := range rules {
-		elems = append(elems, r.Destinations()...)
-	}
-	v4, v6 := splitElements(elems)
+// SetPrefixAllows replaces the explicit address allows. dests must be
+// normalized (netrules.Normalize).
+func (f *Firewall) SetPrefixAllows(dests []netrules.Destination) error {
+	v4, v6 := splitElements(dests)
 	return f.Apply(replaceSet("cidr_allow4", v4) + replaceSet("cidr_allow6", v6))
 }
 
-// AddDNSAllows adds resolved destinations.
-func (f *Firewall) AddDNSAllows(elems []netrules.Destination) error {
-	return f.Apply(changeElements("add", elems))
-}
-
-// RemoveDNSAllows removes resolved destinations that are no longer allowed.
-func (f *Firewall) RemoveDNSAllows(elems []netrules.Destination) error {
-	return f.Apply(changeElements("delete", elems))
+// UpdateDNSAllows removes and adds resolved destinations in one transaction,
+// so replacing an element with a wider one never leaves a gap. The resulting
+// set must be normalized (netrules.Normalize).
+func (f *Firewall) UpdateDNSAllows(remove, add []netrules.Destination) error {
+	return f.Apply(changeElements("delete", remove) + changeElements("add", add))
 }
 
 func splitElements(elems []netrules.Destination) (v4, v6 []string) {

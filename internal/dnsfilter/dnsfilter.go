@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +19,11 @@ import (
 	"github.com/langsjo/t3jail/internal/netrules"
 )
 
-// Grants receives the destinations the filter allows or no longer allows.
+// Grants receives changes to the destinations the filter allows. Together the
+// elements always form a normalized set (see netrules.Normalize); remove and
+// add are applied as one change.
 type Grants interface {
-	Grant([]netrules.Destination) error
-	Revoke([]netrules.Destination) error
+	Update(remove, add []netrules.Destination) error
 }
 
 type Filter struct {
@@ -40,7 +42,7 @@ type Filter struct {
 	// Addresses handed out per queried name, kept so that list changes can
 	// recompute exactly which destinations are still justified.
 	resolved map[string]map[netip.Addr]struct{}
-	granted  map[netrules.Destination]struct{}
+	granted  []netrules.Destination
 }
 
 func New(list *netrules.List, upstream string, grants Grants, haveIPv6 func() bool, log io.Writer) *Filter {
@@ -51,7 +53,6 @@ func New(list *netrules.List, upstream string, grants Grants, haveIPv6 func() bo
 		log:      log,
 		list:     list,
 		resolved: map[string]map[netip.Addr]struct{}{},
-		granted:  map[netrules.Destination]struct{}{},
 	}
 }
 
@@ -141,25 +142,12 @@ func (f *Filter) grant(name string, addrs []netip.Addr) error {
 		known = map[netip.Addr]struct{}{}
 		f.resolved[name] = known
 	}
-	var add []netrules.Destination
+	want := slices.Clone(f.granted)
 	for _, addr := range addrs {
 		known[addr] = struct{}{}
-		for _, d := range destinations(addr, ports) {
-			if _, ok := f.granted[d]; !ok {
-				add = append(add, d)
-			}
-		}
+		want = append(want, destinations(addr, ports)...)
 	}
-	if len(add) == 0 {
-		return nil
-	}
-	if err := f.Grants.Grant(add); err != nil {
-		return err
-	}
-	for _, d := range add {
-		f.granted[d] = struct{}{}
-	}
-	return nil
+	return f.apply(netrules.Normalize(want))
 }
 
 // SetList switches to a new allowlist. Destinations that no entry justifies
@@ -169,7 +157,7 @@ func (f *Filter) SetList(list *netrules.List) error {
 	defer f.mu.Unlock()
 	f.list = list
 
-	want := map[netrules.Destination]struct{}{}
+	var want []netrules.Destination
 	for name, addrs := range f.resolved {
 		ports, ok := list.PortsForName(name)
 		if !ok {
@@ -177,40 +165,34 @@ func (f *Filter) SetList(list *netrules.List) error {
 			continue
 		}
 		for addr := range addrs {
-			for _, d := range destinations(addr, ports) {
-				want[d] = struct{}{}
-			}
+			want = append(want, destinations(addr, ports)...)
 		}
 	}
+	return f.apply(netrules.Normalize(want))
+}
 
-	var revoke, grant []netrules.Destination
-	for d := range f.granted {
-		if _, ok := want[d]; !ok {
-			revoke = append(revoke, d)
-		}
+// apply makes want, a normalized set, the granted set.
+func (f *Filter) apply(want []netrules.Destination) error {
+	remove := without(f.granted, want)
+	add := without(want, f.granted)
+	if len(remove) == 0 && len(add) == 0 {
+		return nil
 	}
-	for d := range want {
-		if _, ok := f.granted[d]; !ok {
-			grant = append(grant, d)
-		}
+	if err := f.Grants.Update(remove, add); err != nil {
+		return err
 	}
-	if len(revoke) > 0 {
-		if err := f.Grants.Revoke(revoke); err != nil {
-			return err
-		}
-		for _, d := range revoke {
-			delete(f.granted, d)
-		}
-	}
-	if len(grant) > 0 {
-		if err := f.Grants.Grant(grant); err != nil {
-			return err
-		}
-		for _, d := range grant {
-			f.granted[d] = struct{}{}
-		}
-	}
+	f.granted = want
 	return nil
+}
+
+func without(ds, drop []netrules.Destination) []netrules.Destination {
+	var out []netrules.Destination
+	for _, d := range ds {
+		if !slices.Contains(drop, d) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func (f *Filter) logf(format string, args ...any) {

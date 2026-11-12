@@ -2,11 +2,13 @@ package dnsfilter
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -17,28 +19,29 @@ import (
 type fakeGrants struct {
 	mu     sync.Mutex
 	active map[string]bool
+	elems  []netrules.Destination
 }
 
-func (g *fakeGrants) Grant(ds []netrules.Destination) error {
+// Update applies the change like nft would: removing an absent element or
+// adding one that overlaps the set is an error.
+func (g *fakeGrants) Update(remove, add []netrules.Destination) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for _, d := range ds {
-		if g.active[key(d)] {
-			panic("granted twice: " + key(d))
-		}
-		g.active[key(d)] = true
-	}
-	return nil
-}
-
-func (g *fakeGrants) Revoke(ds []netrules.Destination) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	for _, d := range ds {
+	for _, d := range remove {
 		if !g.active[key(d)] {
 			panic("revoked unknown: " + key(d))
 		}
 		delete(g.active, key(d))
+		g.elems = slices.DeleteFunc(g.elems, func(e netrules.Destination) bool { return e == d })
+	}
+	for _, d := range add {
+		for _, e := range g.elems {
+			if e.Prefix.Overlaps(d.Prefix) && e.Ports.First <= d.Ports.Last && d.Ports.First <= e.Ports.Last {
+				panic(fmt.Sprintf("%s overlaps %s", key(d), key(e)))
+			}
+		}
+		g.active[key(d)] = true
+		g.elems = append(g.elems, d)
 	}
 	return nil
 }
@@ -71,11 +74,11 @@ type harness struct {
 	t        *testing.T
 	filter   *Filter
 	grants   *fakeGrants
-	log      *bytes.Buffer
+	log      *syncBuffer
 	addr     string
 	queries  []string // what reached upstream
 	queryMu  sync.Mutex
-	haveIPv6 bool
+	haveIPv6 atomic.Bool
 }
 
 func newHarness(t *testing.T, list string, z zone) *harness {
@@ -84,7 +87,8 @@ func newHarness(t *testing.T, list string, z zone) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, grants: &fakeGrants{active: map[string]bool{}}, log: &bytes.Buffer{}, haveIPv6: true}
+	h := &harness{t: t, grants: &fakeGrants{active: map[string]bool{}}, log: &syncBuffer{}}
+	h.haveIPv6.Store(true)
 
 	upstream := serve(t, "udp", dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
 		q := req.Question[0]
@@ -102,9 +106,33 @@ func newHarness(t *testing.T, list string, z zone) *harness {
 		w.WriteMsg(m)
 	}))
 
-	h.filter = New(l, upstream, h.grants, func() bool { return h.haveIPv6 }, h.log)
+	h.filter = New(l, upstream, h.grants, func() bool { return h.haveIPv6.Load() }, h.log)
 	h.addr = serve(t, "udp", h.filter)
 	return h
+}
+
+// The filter writes from server goroutines; tests read concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (h *harness) upstreamQueries() []string {
+	h.queryMu.Lock()
+	defer h.queryMu.Unlock()
+	return slices.Clone(h.queries)
 }
 
 func serve(t *testing.T, network string, handler dns.Handler) string {
@@ -154,8 +182,8 @@ func TestUnlistedNameIsRefusedWithoutAskingUpstream(t *testing.T) {
 			t.Errorf("%s: rcode %s", name, dns.RcodeToString[resp.Rcode])
 		}
 	}
-	if len(h.queries) != 0 {
-		t.Errorf("upstream saw %v", h.queries)
+	if q := h.upstreamQueries(); len(q) != 0 {
+		t.Errorf("upstream saw %v", q)
 	}
 	if !strings.Contains(h.log.String(), "refused\tA\texample.com") {
 		t.Errorf("log: %q", h.log.String())
@@ -200,14 +228,14 @@ func TestWithoutIPv6AAAAIsEmptyAndHintsAreStripped(t *testing.T) {
 		"AAAA svc.example.":  {"svc.example. 60 IN AAAA 2606:4700::1"},
 		"HTTPS svc.example.": {`svc.example. 60 IN HTTPS 1 . ipv4hint="192.0.2.80" ipv6hint="2606:4700::1"`},
 	})
-	h.haveIPv6 = false
+	h.haveIPv6.Store(false)
 
 	resp := h.query("svc.example", dns.TypeAAAA)
 	if resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 0 {
 		t.Errorf("AAAA answer: %v", resp)
 	}
-	if len(h.queries) != 0 {
-		t.Errorf("AAAA went upstream: %v", h.queries)
+	if q := h.upstreamQueries(); len(q) != 0 {
+		t.Errorf("AAAA went upstream: %v", q)
 	}
 
 	resp = h.query("svc.example", dns.TypeHTTPS)
@@ -282,4 +310,21 @@ func TestTruncatedUpstreamAnswerIsRetriedOverTCP(t *testing.T) {
 	if got := grants.list(); !slices.Equal(got, []string{"198.51.100.9:443", "198.51.100.9:80"}) {
 		t.Errorf("grants = %v", got)
 	}
+}
+
+func TestOverlappingPortsOnASharedAddressAreMerged(t *testing.T) {
+	h := newHarness(t, "a.example:80-90\nb.example:85-95\nc.example\n", zone{
+		"A a.example.": {"a.example. 60 IN A 198.51.100.1"},
+		"A b.example.": {"b.example. 60 IN A 198.51.100.1"},
+		"A c.example.": {"c.example. 60 IN A 198.51.100.1"},
+	})
+	for _, n := range []string{"a.example", "b.example", "c.example"} {
+		if resp := h.query(n, dns.TypeA); resp.Rcode != dns.RcodeSuccess {
+			t.Fatalf("%s: %s", n, dns.RcodeToString[resp.Rcode])
+		}
+	}
+	h.wantGrants("198.51.100.1:80-95", "198.51.100.1:443")
+
+	h.setList("a.example:80-90\nc.example\n")
+	h.wantGrants("198.51.100.1:80-90", "198.51.100.1:443")
 }

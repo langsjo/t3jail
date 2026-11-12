@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
-	"slices"
 	"sync"
 
 	"github.com/miekg/dns"
@@ -24,9 +24,10 @@ import (
 // Jail is the filtering half of the helper: firewall, DNS filter and the API
 // the daemon uses to change them while the VM runs.
 type Jail struct {
-	fw       *Firewall
-	filter   *dnsfilter.Filter
-	listPath string
+	fw            *Firewall
+	filter        *dnsfilter.Filter
+	listPath      string
+	ephemeralPath string
 
 	mu           sync.Mutex
 	prefixAllows []netrules.Destination
@@ -38,7 +39,7 @@ type HostNetsRequest struct {
 }
 
 func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
-	j := &Jail{fw: NewFirewall(), listPath: spec.NetworkList}
+	j := &Jail{fw: NewFirewall(), listPath: spec.NetworkList, ephemeralPath: spec.EphemeralNetworkList}
 	if err := j.fw.Init(abi); err != nil {
 		return nil, err
 	}
@@ -71,49 +72,68 @@ func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
 	return j, nil
 }
 
+// readList reads the persistent allowlist plus the entries allowed only until
+// the VM stops.
 func (j *Jail) readList() (*netrules.List, error) {
-	data, err := os.ReadFile(j.listPath)
+	list, err := readListFile(j.listPath)
+	if err != nil {
+		return nil, err
+	}
+	ephemeral, err := readListFile(j.ephemeralPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return list, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range ephemeral.Entries() {
+		list.Add(e)
+	}
+	return list, nil
+}
+
+func readListFile(path string) (*netrules.List, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	list, err := netrules.ParseList(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", j.listPath, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return list, nil
 }
 
-// Reload applies the current network.list. On error the old rules stay.
+// Reload applies the current allowlists. A list that does not parse changes
+// nothing; if applying fails partway, the error says which part.
 func (j *Jail) Reload(context.Context, control.Empty) (control.Empty, error) {
 	list, err := j.readList()
 	if err != nil {
 		return control.Empty{}, err
 	}
 	if err := j.setPrefixAllows(list); err != nil {
-		return control.Empty{}, err
+		return control.Empty{}, fmt.Errorf("address entries: %w", err)
 	}
-	return control.Empty{}, j.filter.SetList(list)
+	if err := j.filter.SetList(list); err != nil {
+		return control.Empty{}, fmt.Errorf("name entries: %w", err)
+	}
+	return control.Empty{}, nil
 }
 
 func (j *Jail) setPrefixAllows(list *netrules.List) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	rules := list.Prefixes()
-	if err := j.fw.SetPrefixAllows(rules); err != nil {
+	var dests []netrules.Destination
+	for _, r := range list.Prefixes() {
+		dests = append(dests, r.Destinations()...)
+	}
+	dests = netrules.Normalize(dests)
+	if err := j.fw.SetPrefixAllows(dests); err != nil {
 		return err
 	}
-	var current []netrules.Destination
-	for _, r := range rules {
-		current = append(current, r.Destinations()...)
-	}
-	var removed []netrules.Destination
-	for _, d := range j.prefixAllows {
-		if !slices.Contains(current, d) {
-			removed = append(removed, d)
-		}
-	}
-	j.prefixAllows = current
-	return flushConntrack(removed)
+	old := j.prefixAllows
+	j.prefixAllows = dests
+	return cutConnections(old, dests)
 }
 
 func (j *Jail) SetHostNets(_ context.Context, req HostNetsRequest) (control.Empty, error) {
@@ -164,19 +184,20 @@ func haveIPv6Route() bool {
 
 type dnsGrants struct{ fw *Firewall }
 
-func (g dnsGrants) Grant(ds []netrules.Destination) error { return g.fw.AddDNSAllows(ds) }
-
-func (g dnsGrants) Revoke(ds []netrules.Destination) error {
-	if err := g.fw.RemoveDNSAllows(ds); err != nil {
+func (g dnsGrants) Update(remove, add []netrules.Destination) error {
+	if err := g.fw.UpdateDNSAllows(remove, add); err != nil {
 		return err
 	}
-	return flushConntrack(ds)
+	// Elements of a normalized set do not overlap, so a removed port is
+	// still allowed only if an added element covers it.
+	return cutConnections(remove, add)
 }
 
-// flushConntrack ends established connections to revoked destinations, which
-// the firewall would otherwise keep accepting.
-func flushConntrack(ds []netrules.Destination) error {
-	if len(ds) == 0 {
+// cutConnections ends established TCP connections that removed allowed and
+// kept does not, which the firewall's established rule would otherwise let
+// continue.
+func cutConnections(removed, kept []netrules.Destination) error {
+	if len(removed) == 0 {
 		return nil
 	}
 	c, err := conntrack.Dial(nil)
@@ -190,25 +211,16 @@ func flushConntrack(ds []netrules.Destination) error {
 	}
 	var errs []error
 	for _, f := range flows {
-		if matchesAny(ds, f.TupleOrig) {
+		const tcp = 6
+		if f.TupleOrig.Proto.Protocol != tcp {
+			continue
+		}
+		addr, port := f.TupleOrig.IP.DestinationAddress.Unmap(), f.TupleOrig.Proto.DestinationPort
+		if netrules.Covers(removed, addr, port) && !netrules.Covers(kept, addr, port) {
 			if err := c.Delete(f); err != nil {
 				errs = append(errs, err)
 			}
 		}
 	}
 	return errors.Join(errs...)
-}
-
-func matchesAny(ds []netrules.Destination, t conntrack.Tuple) bool {
-	const tcp = 6
-	if t.Proto.Protocol != tcp {
-		return false
-	}
-	for _, d := range ds {
-		port := t.Proto.DestinationPort
-		if d.Prefix.Contains(t.IP.DestinationAddress.Unmap()) && port >= d.Ports.First && port <= d.Ports.Last {
-			return true
-		}
-	}
-	return false
 }

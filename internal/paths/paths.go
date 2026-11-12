@@ -94,6 +94,11 @@ func (i Instance) MetaDir() string { return filepath.Join(i.State, "meta") }
 // Runtime sockets.
 func (i Instance) ControlSocket() string { return filepath.Join(i.Runtime, "control.sock") }
 func (i Instance) NetnsSocket() string   { return filepath.Join(i.Runtime, "netns.sock") }
+
+// EphemeralNetworkList holds `net allow` entries that end when the VM stops.
+func (i Instance) EphemeralNetworkList() string {
+	return filepath.Join(i.Runtime, "network.ephemeral.list")
+}
 func (i Instance) CHAPISocket() string   { return filepath.Join(i.Runtime, "ch.sock") }
 func (i Instance) VsockSocket() string   { return filepath.Join(i.Runtime, "vsock.sock") }
 func (i Instance) SerialSocket() string  { return filepath.Join(i.Runtime, "serial.sock") }

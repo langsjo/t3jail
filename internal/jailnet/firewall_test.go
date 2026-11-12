@@ -55,15 +55,18 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 	must(fw.SetHostNets([]netip.Prefix{netip.MustParsePrefix("81.2.69.0/24"), netip.MustParsePrefix("2a00:1450::/32")}))
 	// Replacing must drop the old host networks.
 	must(fw.SetHostNets([]netip.Prefix{netip.MustParsePrefix("93.184.0.0/16")}))
-	must(fw.SetPrefixAllows([]netrules.PrefixRule{
-		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: []netrules.PortRange{{First: 22, Last: 22}}},
-		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: []netrules.PortRange{{First: 8000, Last: 8100}}},
+	must(fw.SetPrefixAllows([]netrules.Destination{
+		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: netrules.PortRange{First: 22, Last: 22}},
+		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: netrules.PortRange{First: 8000, Last: 8100}},
 	}))
 	keep := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.4/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
 	gone := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.5/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
 	v6 := netrules.Destination{Prefix: netip.MustParsePrefix("2606:50c0:8000::154/128"), Ports: netrules.PortRange{First: 22, Last: 22}}
-	must(fw.AddDNSAllows([]netrules.Destination{keep, gone, v6}))
-	must(fw.RemoveDNSAllows([]netrules.Destination{gone}))
+	narrow := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.6/32"), Ports: netrules.PortRange{First: 80, Last: 90}}
+	wide := netrules.Destination{Prefix: narrow.Prefix, Ports: netrules.PortRange{First: 80, Last: 95}}
+	must(fw.UpdateDNSAllows(nil, []netrules.Destination{keep, gone, v6, narrow}))
+	// Replacing an element with an overlapping wider one must work in one go.
+	must(fw.UpdateDNSAllows([]netrules.Destination{gone, narrow}, []netrules.Destination{wide}))
 
 	table := runInFreshNetns(t, *scripts)
 	for _, want := range []string{
@@ -72,12 +75,13 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 		"2001:db8::/32 . 8000-8100",
 		"140.82.121.4 . 443",
 		"2606:50c0:8000::154 . 22",
+		"140.82.121.6 . 80-95",
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("table lacks %q:\n%s", want, table)
 		}
 	}
-	for _, unwanted := range []string{"81.2.69.0/24", "2a00:1450::/32", "140.82.121.5"} {
+	for _, unwanted := range []string{"81.2.69.0/24", "2a00:1450::/32", "140.82.121.5", "80-90"} {
 		if strings.Contains(table, unwanted) {
 			t.Errorf("table still has %q:\n%s", unwanted, table)
 		}
@@ -91,6 +95,6 @@ func TestEmptyUpdatesAreValidScripts(t *testing.T) {
 	}
 	fw.SetHostNets(nil)
 	fw.SetPrefixAllows(nil)
-	fw.AddDNSAllows(nil)
+	fw.UpdateDNSAllows(nil, nil)
 	runInFreshNetns(t, *scripts)
 }

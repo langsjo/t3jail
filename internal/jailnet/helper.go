@@ -38,7 +38,10 @@ const (
 type HelperSpec struct {
 	Launch      chv.LaunchSpec
 	NetworkList string
-	DNSLog      string
+	// EphemeralNetworkList holds entries allowed until the VM stops. It may
+	// not exist.
+	EphemeralNetworkList string
+	DNSLog               string
 	// APISocket is where the helper serves the API the daemon uses to
 	// change the filter while the VM runs.
 	APISocket string
