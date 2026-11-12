@@ -17,7 +17,7 @@ func newResizeCmd() *cobra.Command {
 	var memory config.ByteSize
 	var wait time.Duration
 	cmd := &cobra.Command{
-		Use:   "resize [--cpus N] [--memory SIZE]",
+		Use:   "resize [--cpu N] [--mem SIZE]",
 		Short: "Change the running VM's vCPUs and RAM",
 		Long: `Change the running VM's vCPUs and RAM without restarting it, within the
 maximums set at start. Memory cannot go below the part fixed at start (a
@@ -30,7 +30,7 @@ To change the size for future starts, edit config.toml.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if cpus == 0 && memory == 0 {
-				return errors.New("give --cpus and/or --memory")
+				return errors.New("give --cpu and/or --mem")
 			}
 			inst, err := instance()
 			if err != nil {
@@ -49,8 +49,8 @@ To change the size for future starts, edit config.toml.`,
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&cpus, "cpus", 0, "number of vCPUs")
-	cmd.Flags().Var(&memory, "memory", "RAM, e.g. 12G (a multiple of 128M)")
+	cmd.Flags().IntVarP(&cpus, "cpu", "c", 0, "number of vCPUs")
+	cmd.Flags().VarP(&memory, "mem", "m", "RAM, e.g. 12G (a multiple of 128M)")
 	cmd.Flags().DurationVar(&wait, "wait", time.Minute, "how long to wait for the guest to reach the new size")
 	return cmd
 }
