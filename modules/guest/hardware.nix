@@ -1,14 +1,6 @@
+# Kernel and device setup for cloud-hypervisor.
 {
   boot = {
-    # The guest owns its bootloader so `nixos-rebuild` inside the VM persists.
-    # There is no NVRAM; systemd-boot is found through the fallback path.
-    loader = {
-      systemd-boot.enable = true;
-      efi.canTouchEfiVariables = false;
-      timeout = 3;
-    };
-    growPartition = true;
-
     kernelParams = [
       "console=ttyS0"
       # virtio-mem memory must land in ZONE_MOVABLE to be unpluggable again.
@@ -28,19 +20,6 @@
       kernelModules = [ "vmw_vsock_virtio_transport" ];
     };
     kernelModules = [ "virtio_mem" ];
-  };
-
-  fileSystems = {
-    "/" = {
-      device = "/dev/disk/by-label/nixos";
-      fsType = "ext4";
-      autoResize = true;
-    };
-    "/boot" = {
-      device = "/dev/disk/by-label/ESP";
-      fsType = "vfat";
-      options = [ "umask=0077" ];
-    };
   };
 
   # Hotplugged vCPUs are not onlined by default.
