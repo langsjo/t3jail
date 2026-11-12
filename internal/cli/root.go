@@ -37,6 +37,7 @@ func NewRoot() *cobra.Command {
 		newMountCmd(),
 		newResizeCmd(),
 		newConfigCmd(),
+		newGitCmd(),
 		newDiskCmd(),
 		newDaemonCmd(),
 		newNetnsHelperCmd(),

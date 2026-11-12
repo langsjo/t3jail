@@ -48,6 +48,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `mount add\|remove\|list` | Share host directories, see below. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
 | `config pull\|push [--switch]` | Sync the VM's `/etc/nixos` with a host clone. |
+| `git pull\|push [-r/--repo REPO] [-b/--branch BRANCH]` | Sync a branch between this checkout and a repository in the VM. |
 | `pair` | Sign a T3 client in to the server in the VM. |
 | `disk resize SIZE` | Grow the disk and root filesystem, also while running. |
 | `start --rescue` | Boot the rescue system, see Recovery. |
@@ -128,6 +129,26 @@ persists. `/etc/nixos` is a git repository; `t3jail config pull` clones or
 updates a copy on the host (default in the state directory, or `--dir`), and
 `t3jail config push [--switch]` sends your commits back and optionally
 rebuilds.
+
+### Git repositories in the VM
+
+Agents commit in the VM, which has none of your credentials. To publish their
+work, bring it to a host checkout and push from there:
+
+    cd ~/src/project
+    t3jail git pull                  # fast-forward to the VM's branch of the same name
+    git log -p @{1}..                # review what came in
+    git push
+    t3jail git push -b fix-typo      # send host commits to a VM branch
+
+The VM repository is `--repo`: a folder name in the VM's `~/.t3/projects`
+(where T3 Code puts projects) or an absolute path. Without it, t3jail uses
+the one this checkout last synced with, else the project folder with the
+checkout's name. The branch is `--branch`, else the current branch, which the
+VM repository must then have; only `push --branch` creates a branch there.
+`pull` fetches into `refs/remotes/t3jail/<branch>`; `push` updates the VM's
+checked-out work tree and is refused while it has uncommitted changes. Only
+commits are transferred, never git config or hooks.
 
 ### T3 Code
 
