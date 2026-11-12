@@ -25,3 +25,19 @@ func lockRuntime(inst paths.Instance, name string) (unlock func(), err error) {
 	}
 	return func() { f.Close() }, nil
 }
+
+// tryLockRuntime is lockRuntime without waiting: it fails if the lock is held.
+func tryLockRuntime(inst paths.Instance, name string) (unlock func(), err error) {
+	if err := inst.Ensure(); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(inst.Runtime, name), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
