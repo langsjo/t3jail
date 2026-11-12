@@ -30,6 +30,11 @@ in
     systemd.services.t3 = {
       description = "T3 Code server";
       wantedBy = [ "multi-user.target" ];
+      # Every agent session runs inside this service, including the one that
+      # runs `nixos-rebuild switch`, so a switch that changes the unit (e.g. a
+      # new package after a nixpkgs update) must not restart it. A new version
+      # takes effect on the next `systemctl restart t3` or reboot.
+      restartIfChanged = false;
       wants = [ "network-online.target" ];
       after = [
         "network-online.target"
