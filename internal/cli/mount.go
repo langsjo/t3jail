@@ -264,20 +264,28 @@ func editPersistedMounts(inst paths.Instance, edit func(*mounts.Persisted) error
 // guestRun runs a command in the VM over SSH. Its output is guest-controlled,
 // so it is escaped before reaching the terminal.
 func guestRun(ctx context.Context, inst paths.Instance, args ...string) error {
+	cmd, err := guestCmd(ctx, inst, args...)
+	if err != nil {
+		return err
+	}
+	out, err := cmd.CombinedOutput()
+	if len(out) > 0 {
+		os.Stderr.Write(termsafe.Escape(out))
+	}
+	return err
+}
+
+// guestCmd prepares args to run in the VM over SSH, quoted for its shell.
+func guestCmd(ctx context.Context, inst paths.Instance, args ...string) (*exec.Cmd, error) {
 	quoted := make([]string, len(args))
 	for i, a := range args {
 		quoted[i] = shellQuote(a)
 	}
 	argv, err := sshArgv(inst, strings.Join(quoted, " "))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	out, err := cmd.CombinedOutput()
-	if len(out) > 0 {
-		os.Stderr.Write(termsafe.Escape(out))
-	}
-	return err
+	return exec.CommandContext(ctx, argv[0], argv[1:]...), nil
 }
 
 // shellQuote quotes s for the remote shell that runs SSH commands.
