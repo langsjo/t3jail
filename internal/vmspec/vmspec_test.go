@@ -79,3 +79,25 @@ func TestCheckResize(t *testing.T) {
 		}
 	}
 }
+
+func TestForRescueHasNoHotplugMemory(t *testing.T) {
+	normal := Resources{CPUs: 2, MaxCPUs: 4, Memory: 8 * GiB, MaxMemory: 16 * GiB}
+	rescue := normal.ForRescue()
+	if err := rescue.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := rescue.SplitMemory(); got != (Memory{Boot: 8 * GiB}) {
+		t.Errorf("SplitMemory = %+v, want all 8G as boot memory", got)
+	}
+	if err := rescue.CheckResize(0, 4*GiB); err == nil {
+		t.Error("memory resize allowed without a hotplug region")
+	}
+	if err := rescue.CheckResize(3, 0); err != nil {
+		t.Errorf("CPU resize: %v", err)
+	}
+
+	small := Resources{CPUs: 1, MaxCPUs: 1, Memory: 1 * GiB, MaxMemory: 1 * GiB}.ForRescue()
+	if got := small.SplitMemory().Boot; got != MinRescueMemory {
+		t.Errorf("boot memory %v, want at least %v for the initrd", got, MinRescueMemory)
+	}
+}

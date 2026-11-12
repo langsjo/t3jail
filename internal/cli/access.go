@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/langsjo/t3jail/internal/control"
 	"github.com/langsjo/t3jail/internal/guestabi"
 	"github.com/langsjo/t3jail/internal/paths"
 	"github.com/langsjo/t3jail/internal/sshx"
@@ -49,10 +51,14 @@ func sshArgv(inst paths.Instance, args ...string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	knownHosts := inst.KnownHosts()
+	if rescueRunning(inst) {
+		knownHosts = inst.RescueKnownHosts()
+	}
 	cfg := sshx.RenderConfig(sshx.ConfigParams{
 		User:         guestabi.Get().GuestUser,
 		KeyPath:      inst.SSHKey(),
-		KnownHosts:   inst.KnownHosts(),
+		KnownHosts:   knownHosts,
 		ControlPath:  inst.SSHControlPath(),
 		ProxyCommand: []string{self, "__vsock-proxy", fmt.Sprint(guestabi.Get().VsockSSHPort)},
 	})
@@ -60,6 +66,13 @@ func sshArgv(inst paths.Instance, args ...string) ([]string, error) {
 		return nil, err
 	}
 	return append([]string{"ssh", "-F", inst.SSHConfig(), sshx.HostAlias}, args...), nil
+}
+
+func rescueRunning(inst paths.Instance) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := control.NewClient(inst.ControlSocket()).Status(ctx)
+	return err == nil && st.Rescue
 }
 
 const detachKey = 0x1d // Ctrl-]

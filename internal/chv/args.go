@@ -49,14 +49,7 @@ func Args(s LaunchSpec) ([]string, error) {
 	args := []string{
 		"--api-socket", "path=" + s.APISocket,
 		"--cpus", fmt.Sprintf("boot=%d,max=%d", s.CPUs, s.MaxCPUs),
-		// shared=on is required for virtio-fs and can only be set at boot.
-		"--memory", kv(
-			"size", byteCount(uint64(s.Memory.Boot)),
-			"hotplug_method", "virtio-mem",
-			"hotplug_size", byteCount(uint64(s.Memory.Hotplug)),
-			"hotplugged_size", byteCount(uint64(s.Memory.Plugged)),
-			"shared", "on",
-		),
+		"--memory", memoryArg(s.Memory),
 		"--disk", kv("path", s.Disk, "image_type", "raw"),
 		"--serial", "socket=" + s.SerialSocket,
 		"--console", "off",
@@ -75,6 +68,20 @@ func Args(s LaunchSpec) ([]string, error) {
 		args = append(args, "--fs", fsArg(sh))
 	}
 	return args, nil
+}
+
+func memoryArg(m vmspec.Memory) string {
+	// shared=on is required for virtio-fs and can only be set at boot.
+	if m.Hotplug == 0 {
+		return kv("size", byteCount(uint64(m.Boot)), "shared", "on")
+	}
+	return kv(
+		"size", byteCount(uint64(m.Boot)),
+		"hotplug_method", "virtio-mem",
+		"hotplug_size", byteCount(uint64(m.Hotplug)),
+		"hotplugged_size", byteCount(uint64(m.Plugged)),
+		"shared", "on",
+	)
 }
 
 func fsArg(sh Share) string {

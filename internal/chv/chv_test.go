@@ -56,6 +56,7 @@ func TestArgsKernelBootWithNetAndShares(t *testing.T) {
 	s := baseSpec()
 	s.Firmware = ""
 	s.Kernel, s.Initramfs, s.Cmdline = "/k/vmlinux", "/k/initrd", "console=ttyS0 init=/x"
+	s.Memory = vmspec.Memory{Boot: 4 * config.GiB}
 	s.TapFD, s.GuestMAC = 3, "52:54:00:00:00:02"
 	s.Shares = []Share{{ID: "fs-meta", Tag: "meta", Socket: "/r/a.sock"}, {ID: "fs-b", Tag: "b", Socket: "/r/b.sock"}}
 	args, err := Args(s)
@@ -64,6 +65,10 @@ func TestArgsKernelBootWithNetAndShares(t *testing.T) {
 	}
 	if got := argValue(t, args, "--cmdline"); got != "console=ttyS0 init=/x" {
 		t.Errorf("--cmdline = %q", got)
+	}
+	// Without a hotplug region, cloud-hypervisor must not get virtio-mem.
+	if got := argValue(t, args, "--memory"); got != "size=4294967296,shared=on" {
+		t.Errorf("--memory = %q", got)
 	}
 	if got := argValue(t, args, "--net"); got != "fd=3,mac=52:54:00:00:00:02" {
 		t.Errorf("--net = %q", got)

@@ -31,6 +31,7 @@ func newStartCmd() *cobra.Command {
 		cpus, maxCPUs     int
 		memory, maxMemory config.ByteSize
 	}
+	var rescue bool
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Boot the VM",
@@ -69,14 +70,25 @@ func newStartCmd() *cobra.Command {
 			if err := resources.Validate(); err != nil {
 				return err
 			}
-			return start(cmd.Context(), inst, daemon.RunSpec{
+			spec := daemon.RunSpec{
 				Resources:  resources,
 				Firmware:   os.Getenv(envFirmware),
 				T3HostPort: cfg.T3.HostPort,
-			})
+			}
+			if rescue {
+				spec.Resources = resources.ForRescue()
+				if spec.Rescue, err = buildRescue(inst); err != nil {
+					return err
+				}
+				if err := os.Remove(inst.RescueKnownHosts()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+			}
+			return start(cmd.Context(), inst, spec)
 		},
 	}
 	f := cmd.Flags()
+	f.BoolVar(&rescue, "rescue", false, "boot the rescue system, with the VM's disk attached but not mounted")
 	f.IntVar(&res.cpus, "cpus", 0, "vCPUs at boot (default from config.toml)")
 	f.Var(&res.memory, "memory", "RAM at boot, e.g. 8G (default from config.toml)")
 	f.IntVar(&res.maxCPUs, "max-cpus", 0, "upper bound for live vCPU resizing")
@@ -122,7 +134,11 @@ func start(ctx context.Context, inst paths.Instance, spec daemon.RunSpec) error 
 		return err
 	}
 
-	fmt.Printf("Booting (%d vCPUs, %v RAM)...\n", spec.Resources.CPUs, spec.Resources.Memory)
+	what := "Booting"
+	if spec.Rescue != nil {
+		what = "Booting the rescue system"
+	}
+	fmt.Printf("%s (%d vCPUs, %v RAM)...\n", what, spec.Resources.CPUs, spec.Resources.Memory)
 	deadline := time.Now().Add(bootTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -133,6 +149,10 @@ func start(ctx context.Context, inst paths.Instance, spec daemon.RunSpec) error 
 		case <-time.After(500 * time.Millisecond):
 		}
 		st, err := client.Status(ctx)
+		if err == nil && st.GuestReady && st.Rescue {
+			fmt.Println("The rescue system is running. Its welcome message explains how to repair the VM.\n  Shell: t3jail console (as root) or t3jail ssh (sudo works)\n  Afterwards: t3jail stop && t3jail start")
+			return nil
+		}
 		if err == nil && st.GuestReady {
 			fmt.Printf("VM is running.\n  T3 Code: %s\n  Shell:   t3jail ssh\n", st.T3URL)
 			return nil
@@ -183,6 +203,9 @@ func preflight(spec daemon.RunSpec) error {
 		if _, err := exec.LookPath(bin); err != nil {
 			return fmt.Errorf("%s not found in PATH", bin)
 		}
+	}
+	if spec.Rescue != nil {
+		return nil
 	}
 	if spec.Firmware == "" {
 		return fmt.Errorf("%s is not set; run t3jail through its Nix package", envFirmware)
@@ -266,7 +289,11 @@ func newStatusCmd() *cobra.Command {
 			if asJSON {
 				return json.NewEncoder(os.Stdout).Encode(st)
 			}
-			fmt.Printf("state:   %s (guest ready: %v)\n", st.State, st.GuestReady)
+			state := string(st.State)
+			if st.Rescue {
+				state += ", rescue system"
+			}
+			fmt.Printf("state:   %s (guest ready: %v)\n", state, st.GuestReady)
 			fmt.Printf("vCPUs:   %d (max %d)\n", st.CPUs, st.MaxCPUs)
 			fmt.Printf("memory:  %v (boot %v, max %v)\n", config.ByteSize(st.Memory), config.ByteSize(st.BootMemory), config.ByteSize(st.MaxMemory))
 			fmt.Printf("T3 Code: %s\n", st.T3URL)

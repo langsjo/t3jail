@@ -20,6 +20,23 @@ type Resources struct {
 	MaxCPUs   int
 	Memory    config.ByteSize
 	MaxMemory config.ByteSize
+	// FixedMemory puts all memory in boot memory, with no virtio-mem region,
+	// so memory cannot be resized.
+	FixedMemory bool
+}
+
+// MinRescueMemory fits the rescue system, whose whole store is in its initrd.
+// The initrd must fit in boot memory: virtio-mem memory only comes online
+// once the booted system loads the driver.
+const MinRescueMemory = 2 * config.GiB
+
+// ForRescue returns r adjusted for the rescue system: fixed memory of at
+// least MinRescueMemory.
+func (r Resources) ForRescue() Resources {
+	r.Memory = max(r.Memory, MinRescueMemory)
+	r.MaxMemory = r.Memory
+	r.FixedMemory = true
+	return r
 }
 
 // Memory is the boot/hotplug split given to cloud-hypervisor.
@@ -53,6 +70,9 @@ func (r Resources) Validate() error {
 // boot memory (auto_movable_ratio=301), so this keeps everything plugged at
 // start unpluggable; memory can later shrink back down to Boot.
 func (r Resources) SplitMemory() Memory {
+	if r.FixedMemory {
+		return Memory{Boot: r.Memory}
+	}
 	boot := alignUp(r.Memory/4, MemoryAlign)
 	boot = max(boot, MinBootMemory)
 	boot = min(boot, r.Memory)
@@ -71,6 +91,9 @@ func (r Resources) CheckResize(cpus int, memory config.ByteSize) error {
 	}
 	if memory == 0 {
 		return nil
+	}
+	if r.FixedMemory {
+		return fmt.Errorf("memory cannot be resized in this VM (fixed at %v)", r.Memory)
 	}
 	boot := r.SplitMemory().Boot
 	switch {

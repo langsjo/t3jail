@@ -35,9 +35,19 @@ import (
 
 // RunSpec is written by `t3jail start` and read by the daemon.
 type RunSpec struct {
-	Resources  vmspec.Resources
+	Resources vmspec.Resources
+	// Firmware boots the VM's disk; Rescue, if set, boots the rescue system
+	// instead.
 	Firmware   string
+	Rescue     *RescueBoot
 	T3HostPort uint16
+}
+
+// RescueBoot is a direct kernel boot of the rescue system.
+type RescueBoot struct {
+	Kernel    string
+	Initramfs string
+	Cmdline   string
 }
 
 func (s RunSpec) Write(path string) error {
@@ -117,8 +127,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	os.Remove(d.inst.EphemeralNetworkList())
 	defer os.Remove(d.inst.EphemeralNetworkList())
 
-	if err := d.startPersistedShares(); err != nil {
-		return err
+	// A persisted mount may be what keeps the VM from booting, so the rescue
+	// system starts without them.
+	if d.spec.Rescue == nil {
+		if err := d.startPersistedShares(); err != nil {
+			return err
+		}
 	}
 	if err := d.writeMeta(); err != nil {
 		return err
@@ -200,11 +214,15 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 		VsockSocket:  d.inst.VsockSocket(),
 		VsockCID:     d.abi.VsockCID,
 		Disk:         d.inst.Disk(),
-		Firmware:     d.spec.Firmware,
 		CPUs:         res.CPUs,
 		MaxCPUs:      res.MaxCPUs,
 		Memory:       res.SplitMemory(),
 		Shares:       d.bootShares(),
+	}
+	if r := d.spec.Rescue; r != nil {
+		launch.Kernel, launch.Initramfs, launch.Cmdline = r.Kernel, r.Initramfs, r.Cmdline
+	} else {
+		launch.Firmware = d.spec.Firmware
 	}
 	for _, sock := range []string{d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
 		os.Remove(sock)
@@ -332,6 +350,7 @@ func (d *Daemon) status(ctx context.Context, _ control.Empty) (control.Status, e
 		State:      d.state,
 		PID:        os.Getpid(),
 		GuestReady: d.guestReady,
+		Rescue:     d.spec.Rescue != nil,
 		MaxCPUs:    d.spec.Resources.MaxCPUs,
 		MaxMemory:  uint64(d.spec.Resources.MaxMemory),
 		BootMemory: uint64(d.spec.Resources.SplitMemory().Boot),

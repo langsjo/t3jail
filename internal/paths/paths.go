@@ -88,6 +88,10 @@ func (i Instance) DaemonLog() string   { return filepath.Join(i.Logs(), "daemon.
 func (i Instance) SerialLog() string   { return filepath.Join(i.Logs(), "serial.log") }
 func (i Instance) DNSLog() string      { return filepath.Join(i.Logs(), "dns.log") }
 
+// RescueKnownHosts is separate from KnownHosts because the rescue system
+// makes new host keys at every boot.
+func (i Instance) RescueKnownHosts() string { return filepath.Join(i.SSHDir(), "known_hosts.rescue") }
+
 // MetaDir is shared read-only into the guest (SSH key, persisted mounts).
 func (i Instance) MetaDir() string { return filepath.Join(i.State, "meta") }
 
