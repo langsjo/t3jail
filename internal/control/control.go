@@ -41,6 +41,12 @@ type Status struct {
 	Started    time.Time `json:"started"`
 }
 
+// ResizeRequest changes the running VM's size; zero leaves a value as it is.
+type ResizeRequest struct {
+	CPUs   int    `json:"cpus"`
+	Memory uint64 `json:"memory"`
+}
+
 // RemoveMountRequest detaches the share mounted at GuestPath.
 type RemoveMountRequest struct {
 	GuestPath string `json:"guestPath"`
@@ -98,6 +104,10 @@ func (c *Client) Mounts(ctx context.Context) ([]mounts.Mount, error) {
 	var out []mounts.Mount
 	err := c.Call(ctx, http.MethodGet, "/v1/mounts", nil, &out)
 	return out, err
+}
+
+func (c *Client) Resize(ctx context.Context, req ResizeRequest) error {
+	return c.Call(ctx, http.MethodPost, "/v1/resize", req, nil)
 }
 
 // ReloadNetwork makes the running VM use the current network.list.

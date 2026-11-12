@@ -62,3 +62,24 @@ func (r Resources) SplitMemory() Memory {
 func alignUp(v, align config.ByteSize) config.ByteSize {
 	return (v + align - 1) / align * align
 }
+
+// CheckResize validates a live resize against the limits fixed at start. Zero
+// leaves that resource as it is.
+func (r Resources) CheckResize(cpus int, memory config.ByteSize) error {
+	if cpus != 0 && (cpus < 1 || cpus > r.MaxCPUs) {
+		return fmt.Errorf("cpus must be between 1 and %d (max cpus, set at start)", r.MaxCPUs)
+	}
+	if memory == 0 {
+		return nil
+	}
+	boot := r.SplitMemory().Boot
+	switch {
+	case memory%MemoryAlign != 0:
+		return fmt.Errorf("memory must be a multiple of %v", MemoryAlign)
+	case memory < boot:
+		return fmt.Errorf("memory cannot go below %v, the part fixed at start", boot)
+	case memory > r.MaxMemory:
+		return fmt.Errorf("memory cannot exceed %v (max memory, set at start)", r.MaxMemory)
+	}
+	return nil
+}

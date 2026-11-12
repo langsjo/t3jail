@@ -58,3 +58,24 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckResize(t *testing.T) {
+	r := Resources{CPUs: 4, MaxCPUs: 8, Memory: 8 * config.GiB, MaxMemory: 16 * config.GiB}
+	// Boot memory is 2G (a quarter of 8G).
+	for _, ok := range []struct {
+		cpus int
+		mem  config.ByteSize
+	}{{0, 0}, {1, 0}, {8, 0}, {0, 2 * config.GiB}, {0, 16 * config.GiB}, {6, 12*config.GiB + 128*config.MiB}} {
+		if err := r.CheckResize(ok.cpus, ok.mem); err != nil {
+			t.Errorf("CheckResize(%d, %v): %v", ok.cpus, ok.mem, err)
+		}
+	}
+	for _, bad := range []struct {
+		cpus int
+		mem  config.ByteSize
+	}{{-1, 0}, {9, 0}, {0, 2*config.GiB - 128*config.MiB}, {0, 17 * config.GiB}, {0, 3*config.GiB + config.MiB}} {
+		if err := r.CheckResize(bad.cpus, bad.mem); err == nil {
+			t.Errorf("CheckResize(%d, %v) accepted", bad.cpus, bad.mem)
+		}
+	}
+}
