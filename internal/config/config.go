@@ -31,7 +31,8 @@ type T3Config struct {
 }
 
 type GUIConfig struct {
-	// Command that starts the T3 desktop app. Empty means the bundled one.
+	// Command that starts the T3 desktop app. Empty means t3code-desktop on
+	// PATH, or t3code fetched from nixpkgs after asking.
 	Command []string `toml:"command"`
 }
 
@@ -107,7 +108,9 @@ disk_size = %q
 host_port = %d
 
 [gui]
-# Command for `+"`t3jail gui`"+`; empty uses the bundled T3 desktop app.
+# Command for `+"`t3jail gui`"+`, e.g. ["/opt/t3code/t3code-desktop"]. Empty
+# means t3code-desktop on PATH, or t3code fetched from nixpkgs after asking.
+# The app always runs with its own profile and its local environment off.
 command = []
 `, d.CPUs, d.Memory, d.DiskSize, d.T3.HostPort)
 	return err
