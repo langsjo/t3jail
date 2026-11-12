@@ -134,3 +134,19 @@ func (l *List) Prefixes() []PrefixRule {
 	}
 	return out
 }
+
+// Destination is one allowed address range and port range, the unit the
+// firewall sets are built from.
+type Destination struct {
+	Prefix netip.Prefix
+	Ports  PortRange
+}
+
+// Destinations expands the rule into one destination per port range.
+func (r PrefixRule) Destinations() []Destination {
+	dests := make([]Destination, 0, len(r.Ports))
+	for _, ports := range r.Ports {
+		dests = append(dests, Destination{Prefix: r.Prefix, Ports: ports})
+	}
+	return dests
+}
