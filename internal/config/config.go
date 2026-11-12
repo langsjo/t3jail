@@ -13,11 +13,11 @@ import (
 
 type Config struct {
 	// Defaults for `t3jail start`; flags override them per run.
-	CPUs   int      `toml:"cpus"`
-	Memory ByteSize `toml:"memory"`
+	CPUs   int      `toml:"cpu"`
+	Memory ByteSize `toml:"mem"`
 	// Upper bounds for live resizing. Zero means the host's CPU count / RAM.
-	MaxCPUs   int      `toml:"max_cpus"`
-	MaxMemory ByteSize `toml:"max_memory"`
+	MaxCPUs   int      `toml:"max_cpu"`
+	MaxMemory ByteSize `toml:"max_mem"`
 	// Size of the VM disk created by `t3jail init`.
 	DiskSize ByteSize `toml:"disk_size"`
 
@@ -69,9 +69,9 @@ func Load(path string) (Config, error) {
 func (c Config) validate() error {
 	switch {
 	case c.CPUs < 1:
-		return errors.New("cpus must be at least 1")
+		return errors.New("cpu must be at least 1")
 	case c.MaxCPUs < 0:
-		return errors.New("max_cpus must not be negative")
+		return errors.New("max_cpu must not be negative")
 	case c.T3.HostPort == 0:
 		return errors.New("t3.host_port must be set")
 	}
@@ -92,13 +92,13 @@ func WriteDefault(path string) error {
 	_, err = fmt.Fprintf(f, `# t3jail configuration. Flags given to commands override these values.
 
 # vCPUs and RAM given to the VM by `+"`t3jail start`"+`.
-cpus = %d
-memory = %q
+cpu = %d
+mem = %q
 
 # Upper bounds for `+"`t3jail resize`"+` while the VM runs. 0 means the host's
 # CPU count / total RAM. Changes take effect on the next start.
-max_cpus = 0
-max_memory = "0"
+max_cpu = 0
+max_mem = "0"
 
 # Size of the VM disk created by `+"`t3jail init`"+`.
 disk_size = %q

@@ -55,16 +55,16 @@ func newStartCmd() *cobra.Command {
 			}
 			flags := cmd.Flags()
 			resources := resolveResources(cfg, hostCPUs(), hostMemory())
-			if flags.Changed("cpus") {
+			if flags.Changed("cpu") {
 				resources.CPUs = res.cpus
 			}
-			if flags.Changed("memory") {
+			if flags.Changed("mem") {
 				resources.Memory = res.memory
 			}
-			if flags.Changed("max-cpus") {
+			if flags.Changed("max-cpu") {
 				resources.MaxCPUs = res.maxCPUs
 			}
-			if flags.Changed("max-memory") {
+			if flags.Changed("max-mem") {
 				resources.MaxMemory = res.maxMemory
 			}
 			if err := resources.Validate(); err != nil {
@@ -89,10 +89,10 @@ func newStartCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&rescue, "rescue", false, "boot the rescue system, with the VM's disk attached but not mounted")
-	f.IntVar(&res.cpus, "cpus", 0, "vCPUs at boot (default from config.toml)")
-	f.Var(&res.memory, "memory", "RAM at boot, e.g. 8G (default from config.toml)")
-	f.IntVar(&res.maxCPUs, "max-cpus", 0, "upper bound for live vCPU resizing")
-	f.Var(&res.maxMemory, "max-memory", "upper bound for live RAM resizing")
+	f.IntVarP(&res.cpus, "cpu", "c", 0, "vCPUs at boot (default from config.toml)")
+	f.VarP(&res.memory, "mem", "m", "RAM at boot, e.g. 8G (default from config.toml)")
+	f.IntVar(&res.maxCPUs, "max-cpu", 0, "upper bound for live vCPU resizing")
+	f.Var(&res.maxMemory, "max-mem", "upper bound for live RAM resizing")
 	return cmd
 }
 

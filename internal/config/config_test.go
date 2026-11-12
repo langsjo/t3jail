@@ -61,7 +61,7 @@ func TestDefaultFileRoundTrips(t *testing.T) {
 
 func TestWriteDefaultKeepsExistingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	os.WriteFile(path, []byte("cpus = 2\n"), 0o600)
+	os.WriteFile(path, []byte("cpu = 2\n"), 0o600)
 	if err := WriteDefault(path); err != nil {
 		t.Fatal(err)
 	}
@@ -73,15 +73,15 @@ func TestWriteDefaultKeepsExistingFile(t *testing.T) {
 
 func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 	for name, content := range map[string]string{
-		"typo":      "cpu = 2\n",
-		"bad size":  "memory = \"lots\"\n",
-		"zero cpus": "cpus = 0\n",
+		"typo":      "cpus = 2\n",
+		"bad size":  "mem = \"lots\"\n",
+		"zero cpus": "cpu = 0\n",
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		os.WriteFile(path, []byte(content), 0o600)
 		if _, err := Load(path); err == nil {
 			t.Errorf("%s: Load succeeded, want error", name)
-		} else if name == "typo" && !strings.Contains(err.Error(), "cpu") {
+		} else if name == "typo" && !strings.Contains(err.Error(), "cpus") {
 			t.Errorf("unknown-key error does not name the key: %v", err)
 		}
 	}
