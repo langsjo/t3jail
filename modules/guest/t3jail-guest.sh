@@ -14,6 +14,21 @@ mount_share() {
     return 1
   fi
   mkdir -p "$path"
+  # The kernel announces a hotplugged share before it can be mounted. The
+  # tag's sysfs entry appears just before mounts are accepted, so wait for
+  # it, then retry briefly.
+  local tries=0
+  until grep -qsxF "$tag" /sys/fs/virtiofs/*/tag; do
+    if ((++tries > 100)); then
+      echo "t3jail-guest: virtiofs tag $tag did not appear" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  for tries in 1 2 3 4 5; do
+    mount -t virtiofs -o "$mode" "$tag" "$path" 2>/dev/null && return 0
+    sleep 0.2
+  done
   mount -t virtiofs -o "$mode" "$tag" "$path"
 }
 
