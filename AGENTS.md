@@ -23,8 +23,11 @@ VM as hostile: the agents in it have root there.
 - `modules/guest`: `nixosModules.guest`, the guest's NixOS module.
   `template/` is the VM's initial `/etc/nixos` (with its own AGENTS.md for
   agents inside the VM).
-- `packages/`: the CLI (`t3jail.nix`) and the guest disk image. The CLI wrapper
-  records the image derivation, which is built lazily on first `start`.
+- `modules/rescue`: a RAM-only NixOS for `start --rescue`, sharing
+  `modules/guest/base.nix` (network, SSH, host share) with the guest.
+- `packages/`: the CLI (`t3jail.nix`), the guest disk image and the rescue
+  system. The CLI wrapper records the image and rescue derivations, which are
+  built lazily when first needed.
 - `docs/`: local notes, git-ignored.
 
 ## Commands
@@ -38,12 +41,13 @@ VM as hostile: the agents in it have root there.
 After changing Go dependencies, update `vendorHash` in `packages/t3jail.nix`
 (set it to `lib.fakeHash`, build, copy the hash from the error).
 
-For a quick dev loop against a real VM, build the binary directly
-(`CGO_ENABLED=0 go build -o <path> ./cmd/t3jail`) and point
-`T3JAIL_FIRMWARE` / `T3JAIL_IMAGE_DRV` at the values from the package wrapper.
-Use separate `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_RUNTIME_DIR` so
-experiments do not touch a real instance. Needs `/dev/kvm`, `/dev/net/tun`
-and unprivileged user namespaces.
+To try changes against a real VM, run the packaged CLI
+(`nix build .#t3jail --out-link <dir>`), whose wrapper sets the firmware,
+image and rescue paths, with separate `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and
+`XDG_RUNTIME_DIR` so experiments do not touch a real instance. Changes to the
+guest module or image change the image derivation, but an existing instance
+keeps its disk: delete the state directory to test a fresh image. Needs
+`/dev/kvm`, `/dev/net/tun` and unprivileged user namespaces.
 
 ## Conventions
 
