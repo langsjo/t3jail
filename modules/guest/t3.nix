@@ -24,6 +24,9 @@ in
   };
 
   config = {
+    # `t3 auth`/`t3 pair` operate on the server's state, and `t3jail pair` runs them.
+    environment.systemPackages = [ cfg.package ];
+
     systemd.services.t3 = {
       description = "T3 Code server";
       wantedBy = [ "multi-user.target" ];
