@@ -34,9 +34,16 @@ in
     users.users.${abi.guestUser} = {
       isNormalUser = true;
       uid = abi.guestUid;
+      group = "users";
       extraGroups = [ "wheel" ];
     };
     security.sudo.wheelNeedsPassword = false;
+    assertions = [
+      {
+        assertion = config.users.groups.users.gid == abi.guestGid;
+        message = "t3jail maps gid ${toString abi.guestGid} in shared directories to the host user's group; the users group must have that gid.";
+      }
+    ];
     # Only the host user can reach the serial console.
     services.getty.autologinUser = abi.guestUser;
   };

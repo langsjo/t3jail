@@ -1,6 +1,7 @@
 {
   "guestUser": "agent",
   "guestUid": 1000,
+  "guestGid": 100,
   "gateway4": "192.0.2.1",
   "guest4": "192.0.2.2",
   "prefixLen4": 24,
