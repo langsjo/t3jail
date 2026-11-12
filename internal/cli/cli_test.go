@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/langsjo/t3jail/internal/config"
@@ -54,5 +57,26 @@ func TestCopyUntilDetach(t *testing.T) {
 	copyUntilDetach(&out, &chunkedReader{chunks: []string{"ls\r", "ab\x1dnot sent", "never read"}})
 	if out.String() != "ls\rab" {
 		t.Fatalf("forwarded %q", out.String())
+	}
+}
+
+func TestPrintFileFollowsAcrossRotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "serial.log")
+	os.WriteFile(path, []byte("first boot\n"), 0o600)
+	r, w := io.Pipe()
+	go printFile(path, w, true)
+	lines := bufio.NewScanner(r)
+	next := func() string {
+		lines.Scan()
+		return lines.Text()
+	}
+	if got := next(); got != "first boot" {
+		t.Fatalf("got %q", got)
+	}
+	// What the daemon does on the next start.
+	os.Rename(path, path+".1")
+	os.WriteFile(path, []byte("second boot\n"), 0o600)
+	if got := next(); got != "second boot" {
+		t.Fatalf("got %q", got)
 	}
 }

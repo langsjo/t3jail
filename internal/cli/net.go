@@ -43,35 +43,99 @@ allowed until the entry that caused them is removed or the VM restarts.`,
 }
 
 func newNetAllowCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "allow <entry>...",
-		Short:   "Add entries to the allowlist",
-		Example: "  t3jail net allow example.com '*.npmjs.org' github.com:22",
-		Args:    cobra.MinimumNArgs(1),
+	var persistent bool
+	cmd := &cobra.Command{
+		Use:   "allow <entry>...",
+		Short: "Allow destinations until the VM stops, or permanently with -p",
+		Example: `  t3jail net allow example.com '*.npmjs.org'
+  t3jail net allow -p github.com:22`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return editAndApply(cmd.Context(), args, func(l *netrules.List, e netrules.Entry) error {
-				if !l.Add(e) {
-					fmt.Printf("%s is already allowed\n", e)
+			entries, err := parseEntries(args)
+			if err != nil {
+				return err
+			}
+			inst, err := instance()
+			if err != nil {
+				return err
+			}
+			client := control.NewClient(inst.ControlSocket())
+			if !persistent {
+				if _, err := client.Status(cmd.Context()); err != nil {
+					if errors.Is(err, control.ErrNotRunning) {
+						return errors.New("the VM is not running; use --persistent to allow from the next start on")
+					}
+					return err
+				}
+			}
+
+			var added []netrules.Entry
+			err = withNetworkLists(inst, func(lists networkLists) error {
+				target := lists.ephemeral
+				if persistent {
+					target = lists.persistent
+				}
+				for _, e := range entries {
+					if lists.persistent.Contains(e) {
+						fmt.Printf("%s is already allowed permanently\n", e)
+					} else if !target.Add(e) {
+						fmt.Printf("%s is already allowed\n", e)
+					} else {
+						added = append(added, e)
+					}
 				}
 				return nil
 			})
+			if err != nil || len(added) == 0 {
+				return err
+			}
+			for _, e := range added {
+				if persistent {
+					fmt.Printf("Allowed %s permanently\n", e)
+				} else {
+					fmt.Printf("Allowed %s until the VM stops\n", e)
+				}
+			}
+			return applyNetwork(cmd.Context(), client)
 		},
 	}
+	cmd.Flags().BoolVarP(&persistent, "persistent", "p", false, "save the entry in network.list so it survives restarts")
+	return cmd
 }
 
 func newNetRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <entry>...",
 		Short: "Remove entries from the allowlist",
-		Long:  "Remove entries from the allowlist. Entries must be given as listed, ports included.",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Remove entries from the allowlist, whether they were allowed permanently or
+until the VM stops. Entries must be given as listed, ports included.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return editAndApply(cmd.Context(), args, func(l *netrules.List, e netrules.Entry) error {
-				if !l.Remove(e) {
-					return fmt.Errorf("%s is not in the allowlist", e)
+			entries, err := parseEntries(args)
+			if err != nil {
+				return err
+			}
+			inst, err := instance()
+			if err != nil {
+				return err
+			}
+			err = withNetworkLists(inst, func(lists networkLists) error {
+				for _, e := range entries {
+					if !lists.persistent.Contains(e) && !lists.ephemeral.Contains(e) {
+						return fmt.Errorf("%s is not in the allowlist (see `t3jail net list`)", e)
+					}
+				}
+				for _, e := range entries {
+					lists.persistent.Remove(e)
+					lists.ephemeral.Remove(e)
+					fmt.Printf("Removed %s\n", e)
 				}
 				return nil
 			})
+			if err != nil {
+				return err
+			}
+			return applyNetwork(cmd.Context(), control.NewClient(inst.ControlSocket()))
 		},
 	}
 }
@@ -86,18 +150,15 @@ func newNetListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(inst.NetworkList())
-			if err != nil {
-				return err
-			}
-			l, err := netrules.ParseList(data)
-			if err != nil {
-				return err
-			}
-			for _, e := range l.Entries() {
-				fmt.Println(e)
-			}
-			return nil
+			return withNetworkLists(inst, func(lists networkLists) error {
+				for _, e := range lists.persistent.Entries() {
+					fmt.Println(e)
+				}
+				for _, e := range lists.ephemeral.Entries() {
+					fmt.Printf("%s\t(until the VM stops)\n", e)
+				}
+				return nil
+			})
 		},
 	}
 }
@@ -140,46 +201,40 @@ func newNetLogCmd() *cobra.Command {
 	return cmd
 }
 
-// editAndApply parses all args first, so that one typo changes nothing, then
-// edits the list under a lock and applies it to the running VM.
-func editAndApply(ctx context.Context, args []string, edit func(*netrules.List, netrules.Entry) error) error {
+func parseEntries(args []string) ([]netrules.Entry, error) {
 	var entries []netrules.Entry
 	for _, arg := range args {
 		e, err := netrules.Parse(arg)
 		if err != nil {
-			return fmt.Errorf("%q: %w", arg, err)
+			return nil, fmt.Errorf("%q: %w", arg, err)
 		}
 		entries = append(entries, e)
 	}
-	inst, err := instance()
-	if err != nil {
-		return err
-	}
-	err = editNetworkList(inst, func(l *netrules.List) error {
-		for _, e := range entries {
-			if err := edit(l, e); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	err = control.NewClient(inst.ControlSocket()).ReloadNetwork(ctx)
+	return entries, nil
+}
+
+// applyNetwork makes a running VM use the saved lists.
+func applyNetwork(ctx context.Context, client *control.Client) error {
+	err := client.ReloadNetwork(ctx)
 	if errors.Is(err, control.ErrNotRunning) {
-		fmt.Println("Saved; the VM is not running, the change applies when it starts.")
+		fmt.Println("The VM is not running; the change applies when it starts.")
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("saved %s, but applying it failed: %w", inst.NetworkList(), err)
+		return fmt.Errorf("saved, but applying the change to the running VM failed: %w", err)
 	}
 	return nil
 }
 
-// editNetworkList applies edit to network.list while holding a lock, and
-// replaces the file atomically so the helper never reads half a list.
-func editNetworkList(inst paths.Instance, edit func(*netrules.List) error) error {
+type networkLists struct {
+	persistent *netrules.List
+	ephemeral  *netrules.List
+}
+
+// withNetworkLists runs fn on both allowlists while holding a lock, then
+// saves them if fn succeeds. Files are replaced atomically so the helper never
+// reads half a list.
+func withNetworkLists(inst paths.Instance, fn func(networkLists) error) error {
 	if err := inst.Ensure(); err != nil {
 		return err
 	}
@@ -195,22 +250,51 @@ func editNetworkList(inst paths.Instance, edit func(*netrules.List) error) error
 	if err := ensureNetworkList(inst); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(inst.NetworkList())
+	persistent, err := readList(inst.NetworkList())
 	if err != nil {
 		return err
+	}
+	ephemeral, err := readList(inst.EphemeralNetworkList())
+	if errors.Is(err, fs.ErrNotExist) {
+		ephemeral, err = netrules.ParseList(nil)
+	}
+	if err != nil {
+		return err
+	}
+
+	before := [2]string{string(persistent.Bytes()), string(ephemeral.Bytes())}
+	if err := fn(networkLists{persistent, ephemeral}); err != nil {
+		return err
+	}
+	if string(persistent.Bytes()) != before[0] {
+		if err := writeAtomic(inst.NetworkList(), persistent.Bytes()); err != nil {
+			return err
+		}
+	}
+	if string(ephemeral.Bytes()) != before[1] {
+		return writeAtomic(inst.EphemeralNetworkList(), ephemeral.Bytes())
+	}
+	return nil
+}
+
+func readList(path string) (*netrules.List, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	l, err := netrules.ParseList(data)
 	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return l, nil
+}
+
+func writeAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	if err := edit(l); err != nil {
-		return err
-	}
-	tmp := inst.NetworkList() + ".tmp"
-	if err := os.WriteFile(tmp, l.Bytes(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, inst.NetworkList())
+	return os.Rename(tmp, path)
 }
 
 // ensureNetworkList creates the default allowlist if there is none.

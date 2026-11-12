@@ -153,12 +153,15 @@ func newLogsCmd() *cobra.Command {
 	return cmd
 }
 
+// printFile prints path, and with follow keeps printing what is appended. When
+// the path is replaced (the daemon rotates logs on each start), it switches to
+// the new file.
 func printFile(path string, out io.Writer, follow bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { f.Close() }()
 	for {
 		if _, err := io.Copy(out, f); err != nil {
 			return err
@@ -167,5 +170,24 @@ func printFile(path string, out io.Writer, follow bool) error {
 			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
+		if replaced(f, path) {
+			// Read what was written to the old file in the meantime first.
+			if _, err := io.Copy(out, f); err != nil {
+				return err
+			}
+			if next, err := os.Open(path); err == nil {
+				f.Close()
+				f = next
+			}
+		}
 	}
+}
+
+func replaced(f *os.File, path string) bool {
+	open, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	current, err := os.Stat(path)
+	return err == nil && !os.SameFile(open, current)
 }
