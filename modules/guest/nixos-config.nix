@@ -10,6 +10,10 @@ let
   inherit (config.t3jail) abi;
 in
 {
+  # The VM is configured by the /etc/nixos flake only. Without channels,
+  # `nix-shell -p` and <nixpkgs> resolve to the system's nixpkgs.
+  nix.channel.enable = false;
+
   nix.settings = {
     experimental-features = [
       "nix-command"

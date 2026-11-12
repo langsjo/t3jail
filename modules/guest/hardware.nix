@@ -22,6 +22,10 @@
     kernelModules = [ "virtio_mem" ];
   };
 
+  # The clock follows the host through kvm-clock, so NTP is not needed (and
+  # the allowlist forwards no UDP).
+  services.timesyncd.enable = false;
+
   # Hotplugged vCPUs are not onlined by default.
   services.udev.extraRules = ''
     SUBSYSTEM=="cpu", ACTION=="add", DEVPATH=="/devices/system/cpu/cpu[0-9]*", TEST=="online", ATTR{online}="1"
