@@ -2,6 +2,7 @@ package dnsfilter
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -20,6 +21,9 @@ type fakeGrants struct {
 	mu     sync.Mutex
 	active map[string]bool
 	elems  []netrules.Destination
+	// failNext makes the next Update fail without changing anything, as an
+	// nft transaction does.
+	failNext bool
 }
 
 // Update applies the change like nft would: removing an absent element or
@@ -27,6 +31,10 @@ type fakeGrants struct {
 func (g *fakeGrants) Update(remove, add []netrules.Destination) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.failNext {
+		g.failNext = false
+		return errors.New("nft: transaction failed")
+	}
 	for _, d := range remove {
 		if !g.active[key(d)] {
 			panic("revoked unknown: " + key(d))
@@ -327,4 +335,27 @@ func TestOverlappingPortsOnASharedAddressAreMerged(t *testing.T) {
 
 	h.setList("a.example:80-90\nc.example\n")
 	h.wantGrants("198.51.100.1:80-90", "198.51.100.1:443")
+}
+
+func TestFailedUpdateKeepsBookkeepingInSyncWithTheFirewall(t *testing.T) {
+	h := newHarness(t, "a.example\nb.example:22\n", zone{
+		"A a.example.": {"a.example. 60 IN A 198.51.100.1"},
+		"A b.example.": {"b.example. 60 IN A 198.51.100.2"},
+	})
+	h.query("a.example", dns.TypeA)
+	h.wantGrants("198.51.100.1:80", "198.51.100.1:443")
+
+	h.grants.mu.Lock()
+	h.grants.failNext = true
+	h.grants.mu.Unlock()
+	if resp := h.query("b.example", dns.TypeA); resp.Rcode != dns.RcodeServerFailure {
+		t.Fatalf("rcode %s, want SERVFAIL", dns.RcodeToString[resp.Rcode])
+	}
+	h.wantGrants("198.51.100.1:80", "198.51.100.1:443")
+
+	// Later changes must only remove what the firewall really has; the fake
+	// panics like nft errors on deleting a missing element.
+	h.query("b.example", dns.TypeA)
+	h.setList("b.example:22\n")
+	h.wantGrants("198.51.100.2:22")
 }

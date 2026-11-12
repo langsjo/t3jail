@@ -14,6 +14,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/ti-mo/conntrack"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"github.com/langsjo/t3jail/internal/control"
 	"github.com/langsjo/t3jail/internal/dnsfilter"
@@ -133,7 +134,8 @@ func (j *Jail) setPrefixAllows(list *netrules.List) error {
 	}
 	old := j.prefixAllows
 	j.prefixAllows = dests
-	return cutConnections(old, dests)
+	cutConnections(old, dests)
+	return nil
 }
 
 func (j *Jail) SetHostNets(_ context.Context, req HostNetsRequest) (control.Empty, error) {
@@ -184,19 +186,29 @@ func haveIPv6Route() bool {
 
 type dnsGrants struct{ fw *Firewall }
 
+// Update returns an error only if the firewall did not change, so the
+// filter's record of granted elements always matches the nft set.
 func (g dnsGrants) Update(remove, add []netrules.Destination) error {
 	if err := g.fw.UpdateDNSAllows(remove, add); err != nil {
 		return err
 	}
 	// Elements of a normalized set do not overlap, so a removed port is
 	// still allowed only if an added element covers it.
-	return cutConnections(remove, add)
+	cutConnections(remove, add)
+	return nil
 }
 
 // cutConnections ends established TCP connections that removed allowed and
 // kept does not, which the firewall's established rule would otherwise let
-// continue.
-func cutConnections(removed, kept []netrules.Destination) error {
+// continue. It runs after the firewall changed and is best effort: new
+// connections are already refused, a missed one only runs its course.
+func cutConnections(removed, kept []netrules.Destination) {
+	if err := tryCutConnections(removed, kept); err != nil {
+		fmt.Fprintf(os.Stderr, "t3jail: ending connections to removed destinations: %v\n", err)
+	}
+}
+
+func tryCutConnections(removed, kept []netrules.Destination) error {
 	if len(removed) == 0 {
 		return nil
 	}
@@ -217,7 +229,8 @@ func cutConnections(removed, kept []netrules.Destination) error {
 		}
 		addr, port := f.TupleOrig.IP.DestinationAddress.Unmap(), f.TupleOrig.Proto.DestinationPort
 		if netrules.Covers(removed, addr, port) && !netrules.Covers(kept, addr, port) {
-			if err := c.Delete(f); err != nil {
+			// ENOENT: the flow ended between the dump and the delete.
+			if err := c.Delete(f); err != nil && !errors.Is(err, unix.ENOENT) {
 				errs = append(errs, err)
 			}
 		}
