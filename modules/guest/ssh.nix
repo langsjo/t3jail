@@ -4,7 +4,7 @@
   ...
 }:
 let
-  abi = lib.importJSON ../../internal/guestabi/guestabi.json;
+  inherit (config.t3jail) abi;
 in
 {
   services.openssh = {

@@ -1,8 +1,8 @@
 # Static addressing matching the host-side jail. Filtering is enforced on the
 # host, so nothing here is a security boundary.
-{ lib, ... }:
+{ config, lib, ... }:
 let
-  abi = lib.importJSON ../../internal/guestabi/guestabi.json;
+  inherit (config.t3jail) abi;
 in
 {
   networking = {

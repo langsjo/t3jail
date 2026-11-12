@@ -1,12 +1,13 @@
 # /etc/nixos is a git-tracked flake owned by the agent user, so agents can
 # change and rebuild this VM, and the host can sync it with `t3jail config`.
 {
+  config,
   lib,
   pkgs,
   ...
 }:
 let
-  abi = lib.importJSON ../../internal/guestabi/guestabi.json;
+  inherit (config.t3jail) abi;
 in
 {
   nix.settings = {

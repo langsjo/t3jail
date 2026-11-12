@@ -17,7 +17,6 @@ var raw []byte
 type ABI struct {
 	GuestUser          string     `json:"guestUser"`
 	GuestUID           int        `json:"guestUid"`
-	Hostname           string     `json:"hostname"`
 	Gateway4           netip.Addr `json:"gateway4"`
 	Guest4             netip.Addr `json:"guest4"`
 	PrefixLen4         int        `json:"prefixLen4"`

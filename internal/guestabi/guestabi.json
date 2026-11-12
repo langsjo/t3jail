@@ -1,7 +1,6 @@
 {
   "guestUser": "agent",
   "guestUid": 1000,
-  "hostname": "t3jail",
   "gateway4": "192.0.2.1",
   "guest4": "192.0.2.2",
   "prefixLen4": 24,

@@ -1,12 +1,13 @@
 # The read-only "meta" share from the host carries the SSH key and the list of
 # persisted mounts. virtiofsd enforces read-only on the host side.
 {
+  config,
   lib,
   pkgs,
   ...
 }:
 let
-  abi = lib.importJSON ../../internal/guestabi/guestabi.json;
+  inherit (config.t3jail) abi;
 
   guestHelper = pkgs.writeShellApplication {
     name = "t3jail-guest";

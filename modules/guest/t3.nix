@@ -5,12 +5,12 @@
   ...
 }:
 let
-  cfg = config.t3j.t3;
-  abi = lib.importJSON ../../internal/guestabi/guestabi.json;
+  cfg = config.t3jail.t3;
+  inherit (config.t3jail) abi;
   home = config.users.users.${abi.guestUser}.home;
 in
 {
-  options.t3j.t3 = {
+  options.t3jail.t3 = {
     package = lib.mkOption {
       description = "T3 Code package providing `bin/t3`";
       type = lib.types.package;
@@ -33,15 +33,14 @@ in
         "t3jail-host-setup.service"
       ];
       environment = {
-        T3CODE_NO_BROWSER = "1";
         # Agent CLIs installed later through any profile must be found.
         PATH = lib.mkForce (
-          lib.concatStringsSep ":" [
-            "/run/wrappers/bin"
-            "${home}/.nix-profile/bin"
-            "/etc/profiles/per-user/${abi.guestUser}/bin"
-            "/nix/var/nix/profiles/default/bin"
-            "/run/current-system/sw/bin"
+          lib.makeBinPath [
+            "/run/wrappers"
+            "${home}/.nix-profile"
+            "/etc/profiles/per-user/${abi.guestUser}"
+            "/nix/var/nix/profiles/default"
+            "/run/current-system/sw"
           ]
         );
       };
