@@ -5,6 +5,7 @@ package hostnets
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"slices"
 	"time"
@@ -68,21 +69,21 @@ func toPrefix(ip []byte, mask []byte) (netip.Prefix, bool) {
 		return netip.Prefix{}, false
 	}
 	addr = addr.Unmap()
-	ones := 0
-	for _, b := range mask {
-		for ; b != 0; b <<= 1 {
-			ones++
-		}
-	}
 	if len(mask) == 0 {
-		ones = addr.BitLen()
+		return netip.PrefixFrom(addr, addr.BitLen()), true
+	}
+	ones, bits := net.IPMask(mask).Size()
+	if bits == 0 {
+		// Not a contiguous mask; the kernel never reports those.
+		return netip.Prefix{}, false
 	}
 	return netip.PrefixFrom(addr, ones), true
 }
 
 // Watch calls onChange with the current prefixes now and whenever they change,
-// until ctx is done.
-func Watch(ctx context.Context, onChange func([]netip.Prefix), onError func(error)) {
+// until ctx is done. A failed onChange is retried until it succeeds: a missed
+// update would leave a new network reachable.
+func Watch(ctx context.Context, onChange func([]netip.Prefix) error, onError func(error)) {
 	addrUpdates := make(chan netlink.AddrUpdate, 64)
 	routeUpdates := make(chan netlink.RouteUpdate, 64)
 	done := make(chan struct{})
@@ -93,39 +94,68 @@ func Watch(ctx context.Context, onChange func([]netip.Prefix), onError func(erro
 	if err := netlink.RouteSubscribe(routeUpdates, done); err != nil {
 		onError(err)
 	}
+	events := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-addrUpdates:
+			case <-routeUpdates:
+			case <-done:
+				return
+			}
+			select {
+			case events <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	watch(ctx, Current, events, 30*time.Second, onChange, onError)
+}
+
+func watch(ctx context.Context, read func() ([]netip.Prefix, error), events <-chan struct{}, pollEvery time.Duration, onChange func([]netip.Prefix) error, onError func(error)) {
 
 	var last []netip.Prefix
-	refresh := func() {
-		current, err := Current()
+	applied := false
+	// refresh reports whether it needs to be retried.
+	refresh := func() bool {
+		current, err := read()
+		if err == nil && (!applied || !slices.Equal(current, last)) {
+			err = onChange(current)
+			if err == nil {
+				last, applied = current, true
+			}
+		}
 		if err != nil {
 			onError(err)
-			return
+			return true
 		}
-		if !slices.Equal(current, last) {
-			last = current
-			onChange(current)
-		}
+		return false
 	}
-	refresh()
+
+	var settle <-chan time.Time
+	if refresh() {
+		settle = time.After(time.Second)
+	}
 
 	// Changes come in bursts (an interface coming up adds several addresses
 	// and routes); settle briefly, and poll as a fallback for lost events.
-	var settle <-chan time.Time
-	poll := time.NewTicker(30 * time.Second)
+	poll := time.NewTicker(pollEvery)
 	defer poll.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-addrUpdates:
-			settle = time.After(200 * time.Millisecond)
-		case <-routeUpdates:
+		case <-events:
 			settle = time.After(200 * time.Millisecond)
 		case <-settle:
 			settle = nil
-			refresh()
+			if refresh() {
+				settle = time.After(time.Second)
+			}
 		case <-poll.C:
-			refresh()
+			if refresh() {
+				settle = time.After(time.Second)
+			}
 		}
 	}
 }
