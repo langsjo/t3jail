@@ -9,7 +9,7 @@ VM as hostile: the agents in it have root there.
 
 - `cmd/t3jail`: entry point.
 - `internal/cli`: cobra commands, one file per group (`net.go`, `mount.go`,
-  `gui.go`, ...). Hidden internal commands (`__daemon`, `__netns-helper`,
+  `pair.go`, ...). Hidden internal commands (`__daemon`, `__netns-helper`,
   `__vsock-proxy`) live here too.
 - `internal/daemon` + `internal/control`: the per-VM supervisor and the
   HTTP-over-Unix-socket API that every CLI command talks to.

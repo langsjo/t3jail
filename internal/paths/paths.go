@@ -81,7 +81,6 @@ func (i Instance) SSHConfig() string   { return filepath.Join(i.SSHDir(), "confi
 func (i Instance) KnownHosts() string  { return filepath.Join(i.SSHDir(), "known_hosts") }
 func (i Instance) MountsFile() string  { return filepath.Join(i.State, "mounts.toml") }
 func (i Instance) NixOSConfig() string { return filepath.Join(i.State, "nixos-config") }
-func (i Instance) GUIProfile() string  { return filepath.Join(i.State, "gui-profile") }
 func (i Instance) GCRoots() string     { return filepath.Join(i.State, "gcroots") }
 func (i Instance) Logs() string        { return filepath.Join(i.State, "logs") }
 func (i Instance) DaemonLog() string   { return filepath.Join(i.Logs(), "daemon.log") }

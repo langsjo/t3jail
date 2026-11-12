@@ -21,19 +21,12 @@ type Config struct {
 	// Size of the VM disk created by `t3jail init`.
 	DiskSize ByteSize `toml:"disk_size"`
 
-	T3  T3Config  `toml:"t3"`
-	GUI GUIConfig `toml:"gui"`
+	T3 T3Config `toml:"t3"`
 }
 
 type T3Config struct {
 	// Port on 127.0.0.1 forwarded to the VM's T3 server.
 	HostPort uint16 `toml:"host_port"`
-}
-
-type GUIConfig struct {
-	// Command that starts the T3 desktop app. Empty means t3code-desktop on
-	// PATH, or t3code fetched from nixpkgs after asking.
-	Command []string `toml:"command"`
 }
 
 func Defaults() Config {
@@ -56,11 +49,14 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if undecoded := md.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, len(undecoded))
-		for i, k := range undecoded {
-			keys[i] = k.String()
+	var keys []string
+	for _, k := range md.Undecoded() {
+		// [gui] configured the removed `t3jail gui`; existing files have it.
+		if k[0] != "gui" {
+			keys = append(keys, k.String())
 		}
+	}
+	if len(keys) > 0 {
 		return Config{}, fmt.Errorf("%s: unknown keys: %s", path, strings.Join(keys, ", "))
 	}
 	return cfg, cfg.validate()
@@ -106,12 +102,6 @@ disk_size = %q
 [t3]
 # The T3 server is reachable at http://127.0.0.1:<host_port>.
 host_port = %d
-
-[gui]
-# Command for `+"`t3jail gui`"+`, e.g. ["/opt/t3code/t3code-desktop"]. Empty
-# means t3code-desktop on PATH, or t3code fetched from nixpkgs after asking.
-# The app always runs with its own profile and its local environment off.
-command = []
 `, d.CPUs, d.Memory, d.DiskSize, d.T3.HostPort)
 	return err
 }

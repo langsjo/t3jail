@@ -30,7 +30,7 @@ The first start builds the VM's disk image (a few minutes) and creates a 64G
 sparse disk, an SSH key and the default configuration. Then:
 
     t3jail ssh               # a shell in the VM, as user `agent` with sudo
-    t3jail gui               # the T3 desktop app, connected to the VM
+    t3jail pair              # a link to connect a T3 Code client, see below
     t3jail stop
 
 To install it, add `github:langsjo/t3jail` as a flake input and put
@@ -48,7 +48,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `mount add\|remove\|list` | Share host directories, see below. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
 | `config pull\|push [--switch]` | Sync the VM's `/etc/nixos` with a host clone. |
-| `pair`, `gui` | Sign T3 clients in to the server in the VM. |
+| `pair` | Sign a T3 client in to the server in the VM. |
 | `disk resize SIZE` | Grow the disk and root filesystem, also while running. |
 | `start --rescue` | Boot the rescue system, see Recovery. |
 
@@ -60,7 +60,7 @@ Every command has `--help`.
   port, desktop app command.
 - `~/.config/t3jail/default/network.list`: the allowlist.
 - `~/.local/state/t3jail/default/`: the VM disk, SSH key, persisted mounts,
-  logs, the desktop app's profile.
+  logs.
 - `$XDG_RUNTIME_DIR/t3jail/default/`: sockets, readable only by you.
 
 ### Network allowlist
@@ -133,14 +133,11 @@ rebuilds.
 
 The server listens in the VM and is forwarded to `127.0.0.1:37730` on the host
 (`[t3] host_port` in config.toml). T3's own pairing tokens control access:
+`t3jail pair` prints a one-time link. In the T3 Code desktop app, add it under
+Settings > Connections.
 
-- `t3jail gui` starts the desktop app with a profile of its own and its
-  local environment (which would run agents directly on the host) turned
-  off. It uses `[gui] command` from config.toml, else `t3code-desktop` on
-  `PATH`, else offers to fetch `t3code` from nixpkgs. Until the app has an
-  environment saved, it prints a one-time pairing link: add it under
-  Settings > Connections.
-- `t3jail pair` prints a one-time link for any other client.
+Turn off the desktop app's local environment in its settings. It runs agents
+directly on the host, outside the VM, and the app shows it next to the VM.
 
 ## Recovery
 
@@ -171,7 +168,7 @@ host:
    neither hooks nor `.git/config`, but review the files before evaluating
    them with Nix or allowing them with direnv on the host.
 3. **The desktop app** talks to a server the agents control. Keep the app's
-   local environment off (`t3jail gui` enforces this at every launch), and
+   local environment off (the app lets you switch it back on), and
    keep T3's "linked environments" and T3 Connect off: they let one
    environment's agents run work in another.
 4. **Allowed destinations can receive data.** Agents can, for example, push to
@@ -208,8 +205,8 @@ By hand, after `t3jail start`:
 4. `mkdir -p ~/tmp/x && t3jail mount add ~/tmp/x:/work`, then
    `t3jail ssh -- touch /work/f`: `~/tmp/x/f` is owned by you.
 5. `t3jail resize --cpu 2 --mem 4G`; `t3jail ssh -- nproc` prints 2.
-6. `t3jail gui`: pair with the printed link; the app shows no local
-   environment, and `ls ~` in a new thread lists the VM's home directory.
+6. `t3jail pair`: add the link in the desktop app; `ls ~` in a new thread
+   on the VM's environment lists the VM's home directory.
 
 ## Development
 

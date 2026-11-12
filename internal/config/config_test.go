@@ -71,6 +71,18 @@ func TestWriteDefaultKeepsExistingFile(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresRemovedGUISection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte("cpu = 2\n\n[gui]\ncommand = [\"/opt/t3code\"]\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CPUs != 2 {
+		t.Errorf("CPUs = %d, want 2", cfg.CPUs)
+	}
+}
+
 func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 	for name, content := range map[string]string{
 		"typo":      "cpus = 2\n",
