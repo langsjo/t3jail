@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -128,4 +129,37 @@ func TestNetAllowIsEphemeralByDefault(t *testing.T) {
 	if reloads.Load() != 2 {
 		t.Errorf("reloads = %d, want 2", reloads.Load())
 	}
+}
+
+func TestNetListHidesEphemeralEntriesWhenStopped(t *testing.T) {
+	inst := testInstance(t)
+	fakeDaemon(t, inst)
+	if err := runCLI("net", "allow", "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an unclean exit: the daemon is gone, its ephemeral list is not.
+	os.Remove(inst.ControlSocket())
+	out := captureStdout(t, func() {
+		if err := runCLI("net", "list"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(out, "example.com") {
+		t.Errorf("stale ephemeral entry listed:\n%s", out)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	fn()
+	os.Stdout = orig
+	w.Close()
+	data, _ := io.ReadAll(r)
+	return string(data)
 }

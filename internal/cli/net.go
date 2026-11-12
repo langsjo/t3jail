@@ -89,14 +89,24 @@ func newNetAllowCmd() *cobra.Command {
 			if err != nil || len(added) == 0 {
 				return err
 			}
-			for _, e := range added {
-				if persistent {
-					fmt.Printf("Allowed %s permanently\n", e)
-				} else {
-					fmt.Printf("Allowed %s until the VM stops\n", e)
-				}
+			running, err := applyNetwork(cmd.Context(), client)
+			if err != nil {
+				return err
 			}
-			return applyNetwork(cmd.Context(), client)
+			if !running && !persistent {
+				// The VM stopped after the check above. The entry is discarded
+				// when the VM next starts.
+				return errors.New("the VM stopped before the change applied; nothing was allowed")
+			}
+			until := "until the VM stops"
+			if persistent {
+				until = "permanently"
+			}
+			for _, e := range added {
+				fmt.Printf("Allowed %s %s\n", e, until)
+			}
+			printIfStopped(running)
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&persistent, "persistent", "p", false, "save the entry in network.list so it survives restarts")
@@ -135,7 +145,12 @@ until the VM stops. Entries must be given as listed, ports included.`,
 			if err != nil {
 				return err
 			}
-			return applyNetwork(cmd.Context(), control.NewClient(inst.ControlSocket()))
+			running, err := applyNetwork(cmd.Context(), control.NewClient(inst.ControlSocket()))
+			if err != nil {
+				return err
+			}
+			printIfStopped(running)
+			return nil
 		},
 	}
 }
@@ -150,9 +165,16 @@ func newNetListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// After an unclean exit the ephemeral list outlives the VM. It is
+			// discarded at the next start, so it does not apply now.
+			_, statusErr := control.NewClient(inst.ControlSocket()).Status(cmd.Context())
+			running := !errors.Is(statusErr, control.ErrNotRunning)
 			return withNetworkLists(inst, func(lists networkLists) error {
 				for _, e := range lists.persistent.Entries() {
 					fmt.Println(e)
+				}
+				if !running {
+					return nil
 				}
 				for _, e := range lists.ephemeral.Entries() {
 					fmt.Printf("%s\t(until the VM stops)\n", e)
@@ -213,17 +235,23 @@ func parseEntries(args []string) ([]netrules.Entry, error) {
 	return entries, nil
 }
 
-// applyNetwork makes a running VM use the saved lists.
-func applyNetwork(ctx context.Context, client *control.Client) error {
-	err := client.ReloadNetwork(ctx)
+// applyNetwork makes a running VM use the saved lists. It reports whether a VM
+// was running.
+func applyNetwork(ctx context.Context, client *control.Client) (running bool, err error) {
+	err = client.ReloadNetwork(ctx)
 	if errors.Is(err, control.ErrNotRunning) {
-		fmt.Println("The VM is not running; the change applies when it starts.")
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("saved, but applying the change to the running VM failed: %w", err)
+		return true, fmt.Errorf("saved, but applying the change to the running VM failed: %w", err)
 	}
-	return nil
+	return true, nil
+}
+
+func printIfStopped(running bool) {
+	if !running {
+		fmt.Println("The VM is not running; the change applies when it starts.")
+	}
 }
 
 type networkLists struct {
