@@ -36,9 +36,15 @@ table inet t3jail {
 		iifname "{{.Tap}}" ip6 daddr @blocked6 goto refuse
 		iifname "{{.Tap}}" ip daddr @hostnets4 goto refuse
 		iifname "{{.Tap}}" ip6 daddr @hostnets6 goto refuse
+		iifname "{{.Tap}}" jump unfiltered
 		iifname "{{.Tap}}" ip daddr . tcp dport @dns_allow4 accept
 		iifname "{{.Tap}}" ip6 daddr . tcp dport @dns_allow6 accept
 		iifname "{{.Tap}}" goto refuse
+	}
+
+	# Empty while the allowlist applies; `t3jail net disable` adds an accept
+	# rule, letting through anything not blocked above.
+	chain unfiltered {
 	}
 
 	# Fail fast instead of letting clients hang until they time out.

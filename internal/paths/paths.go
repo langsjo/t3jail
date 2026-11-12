@@ -117,3 +117,9 @@ func (i Instance) SSHControlPath() string {
 func (i Instance) FSSocket(tag string) string {
 	return filepath.Join(i.Runtime, "fs-"+tag+".sock")
 }
+
+// NetworkOffMarker exists while the allowlist is switched off persistently.
+func (i Instance) NetworkOffMarker() string { return filepath.Join(i.Config, "network.off") }
+
+// NetworkFilterOverride switches the allowlist on or off until the VM stops.
+func (i Instance) NetworkFilterOverride() string { return filepath.Join(i.Runtime, "network.filter") }

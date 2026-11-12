@@ -116,6 +116,16 @@ func (f *Firewall) UpdateDNSAllows(remove, add []netrules.Destination) error {
 	return f.Apply(changeElements("delete", remove) + changeElements("add", add))
 }
 
+// SetUnfiltered lets the guest reach any destination that is not blocked
+// (true), or only allowed ones (false).
+func (f *Firewall) SetUnfiltered(unfiltered bool) error {
+	script := "flush chain inet t3jail unfiltered\n"
+	if unfiltered {
+		script += "add rule inet t3jail unfiltered accept\n"
+	}
+	return f.Apply(script)
+}
+
 func splitElements(elems []netrules.Destination) (v4, v6 []string) {
 	for _, e := range elems {
 		if e.Prefix.Addr().Is4() {

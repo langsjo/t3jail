@@ -359,3 +359,26 @@ func TestFailedUpdateKeepsBookkeepingInSyncWithTheFirewall(t *testing.T) {
 	h.setList("b.example:22\n")
 	h.wantGrants("198.51.100.2:22")
 }
+
+func TestOpenFilterAnswersEveryNameButGrantsOnlyListedOnes(t *testing.T) {
+	h := newHarness(t, "github.com\n", zone{
+		"A example.com.": {"example.com. 60 IN A 93.184.215.14"},
+		"A github.com.":  {"github.com. 60 IN A 140.82.121.4"},
+	})
+	h.filter.SetOpen(true)
+	if resp := h.query("example.com", dns.TypeA); resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 1 {
+		t.Fatalf("open filter: example.com answered %v", resp)
+	}
+	// The firewall lets everything through while open; grants are kept for
+	// listed names so they still work once the filter is on again.
+	h.query("github.com", dns.TypeA)
+	h.wantGrants("140.82.121.4:80", "140.82.121.4:443")
+	if !strings.Contains(h.log.String(), "unfiltered\tA\texample.com") {
+		t.Errorf("log: %q", h.log.String())
+	}
+
+	h.filter.SetOpen(false)
+	if resp := h.query("example.com", dns.TypeA); resp.Rcode != dns.RcodeRefused {
+		t.Errorf("filter on again: rcode %s", dns.RcodeToString[resp.Rcode])
+	}
+}

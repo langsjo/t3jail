@@ -91,6 +91,17 @@ host's own addresses and local networks (followed live, so a VPN coming up is
 covered), are blocked even if an allowed name resolves to them. An explicit
 address or network entry overrides that block.
 
+To let the VM reach any internet destination for a while without editing the
+allowlist:
+
+    t3jail net disable        # until the VM stops; -p to keep it off
+    t3jail net enable         # apply the allowlist again; -p to make it stick
+
+While the allowlist is off, any name resolves and any port and protocol is
+forwarded, but this machine, your LAN and the other blocked ranges stay
+blocked unless an address entry allows them. Enabling it again cuts the
+connections that only the switched-off allowlist let through.
+
 ### Shared directories
 
     t3jail mount add ~/src/project                 # same path in the VM

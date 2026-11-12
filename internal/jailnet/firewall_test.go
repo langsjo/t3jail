@@ -98,3 +98,24 @@ func TestEmptyUpdatesAreValidScripts(t *testing.T) {
 	fw.UpdateDNSAllows(nil, nil)
 	runInFreshNetns(t, *scripts)
 }
+
+func TestSetUnfilteredTogglesOneAcceptRule(t *testing.T) {
+	chain := func(table string) string {
+		start := strings.Index(table, "chain unfiltered {")
+		end := strings.Index(table[start:], "}")
+		return table[start : start+end]
+	}
+	fw, scripts := recordingFirewall()
+	if err := fw.Init(guestabi.Get()); err != nil {
+		t.Fatal(err)
+	}
+	fw.SetUnfiltered(true)
+	fw.SetUnfiltered(true)
+	if c := chain(runInFreshNetns(t, *scripts)); strings.Count(c, "accept") != 1 {
+		t.Errorf("disabled twice: %q, want one accept rule", c)
+	}
+	fw.SetUnfiltered(false)
+	if c := chain(runInFreshNetns(t, *scripts)); strings.Contains(c, "accept") {
+		t.Errorf("enabled again: %q still accepts", c)
+	}
+}

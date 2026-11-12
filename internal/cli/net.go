@@ -34,9 +34,13 @@ Each entry may end in :PORTS, e.g. :22, :80,443 or :8000-8100. Without it,
 TCP ports 80 and 443 are allowed. Only TCP is forwarded.
 
 Changes apply immediately to a running VM. Already resolved addresses stay
-allowed until the entry that caused them is removed or the VM restarts.`,
+allowed until the entry that caused them is removed or the VM restarts.
+
+` + "`t3jail net disable`" + ` lets the VM reach any internet destination for a while
+without changing the allowlist; ` + "`t3jail net enable`" + ` applies it again.`,
 	}
-	cmd.AddCommand(newNetAllowCmd(), newNetRemoveCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd())
+	cmd.AddCommand(newNetAllowCmd(), newNetRemoveCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(),
+		newNetSwitchCmd(true), newNetSwitchCmd(false))
 	return cmd
 }
 
@@ -167,6 +171,13 @@ func newNetListCmd() *cobra.Command {
 			// discarded at the next start, so it does not apply now.
 			_, statusErr := control.NewClient(inst.ControlSocket()).Status(cmd.Context())
 			running := !errors.Is(statusErr, control.ErrNotRunning)
+			state, err := filterState(inst, running)
+			if err != nil {
+				return err
+			}
+			if line := describeFilterState(state); line != "" {
+				fmt.Printf("# %s\n", line)
+			}
 			return withNetworkLists(inst, func(lists networkLists) error {
 				for _, e := range lists.persistent.Entries() {
 					fmt.Println(e)

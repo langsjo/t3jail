@@ -297,6 +297,9 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("vCPUs:   %d (max %d)\n", st.CPUs, st.MaxCPUs)
 			fmt.Printf("memory:  %v (boot %v, max %v)\n", config.ByteSize(st.Memory), config.ByteSize(st.BootMemory), config.ByteSize(st.MaxMemory))
 			fmt.Printf("T3 Code: %s\n", st.T3URL)
+			if state, err := filterState(inst, true); err == nil && describeFilterState(state) != "" {
+				fmt.Printf("network: %s\n", describeFilterState(state))
+			}
 			fmt.Printf("uptime:  %s\n", time.Since(st.Started).Round(time.Second))
 			return nil
 		},

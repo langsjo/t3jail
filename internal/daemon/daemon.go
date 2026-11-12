@@ -123,9 +123,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer lock.Close()
 
-	// Entries allowed only for the previous run end with it.
+	// Entries allowed, and filter switches made, only for the previous run end
+	// with it.
 	os.Remove(d.inst.EphemeralNetworkList())
+	os.Remove(d.inst.NetworkFilterOverride())
 	defer os.Remove(d.inst.EphemeralNetworkList())
+	defer os.Remove(d.inst.NetworkFilterOverride())
 
 	// A persisted mount may be what keeps the VM from booting, so the rescue
 	// system starts without them.
@@ -233,12 +236,14 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 	}
 	specPath := filepath.Join(d.inst.Runtime, "helper.json")
 	data, err := json.Marshal(jailnet.HelperSpec{
-		Launch:               launch,
-		NetworkList:          d.inst.NetworkList(),
-		EphemeralNetworkList: d.inst.EphemeralNetworkList(),
-		DNSLog:               d.inst.DNSLog(),
-		APISocket:            d.inst.NetnsSocket(),
-		HostNets:             hostNets,
+		Launch:                launch,
+		NetworkList:           d.inst.NetworkList(),
+		EphemeralNetworkList:  d.inst.EphemeralNetworkList(),
+		NetworkOffMarker:      d.inst.NetworkOffMarker(),
+		NetworkFilterOverride: d.inst.NetworkFilterOverride(),
+		DNSLog:                d.inst.DNSLog(),
+		APISocket:             d.inst.NetnsSocket(),
+		HostNets:              hostNets,
 	})
 	if err != nil {
 		return nil, err

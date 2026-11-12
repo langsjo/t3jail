@@ -39,6 +39,9 @@ type Filter struct {
 
 	mu   sync.Mutex
 	list *netrules.List
+	// open answers names that are not on the list too, without granting
+	// their addresses: the firewall lets everything through meanwhile.
+	open bool
 	// Addresses handed out per queried name, kept so that list changes can
 	// recompute exactly which destinations are still justified.
 	resolved map[string]map[netip.Addr]struct{}
@@ -69,8 +72,9 @@ func (f *Filter) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 
 	f.mu.Lock()
 	_, allowed := f.list.PortsForName(name)
+	open := f.open
 	f.mu.Unlock()
-	if !allowed {
+	if !allowed && !open {
 		f.logf("refused\t%s\t%s", qtype, name)
 		reply(w, new(dns.Msg).SetRcode(req, dns.RcodeRefused))
 		return
@@ -94,14 +98,18 @@ func (f *Filter) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	addrs := chainAddrs(resp, q.Name)
-	// The firewall must know the addresses before the guest does, or its
-	// first connection races the set update.
-	if err := f.grant(name, addrs); err != nil {
-		f.logf("error\t%s\t%s\t%v", qtype, name, err)
-		reply(w, new(dns.Msg).SetRcode(req, dns.RcodeServerFailure))
-		return
+	if allowed {
+		// The firewall must know the addresses before the guest does, or
+		// its first connection races the set update.
+		if err := f.grant(name, addrs); err != nil {
+			f.logf("error\t%s\t%s\t%v", qtype, name, err)
+			reply(w, new(dns.Msg).SetRcode(req, dns.RcodeServerFailure))
+			return
+		}
+		f.logf("allowed\t%s\t%s\t%s", qtype, name, joinAddrs(addrs))
+	} else {
+		f.logf("unfiltered\t%s\t%s\t%s", qtype, name, joinAddrs(addrs))
 	}
-	f.logf("allowed\t%s\t%s\t%s", qtype, name, joinAddrs(addrs))
 
 	resp.Id = req.Id
 	if !overTCP {
@@ -148,6 +156,20 @@ func (f *Filter) grant(name string, addrs []netip.Addr) error {
 		want = append(want, destinations(addr, ports)...)
 	}
 	return f.apply(netrules.Normalize(want))
+}
+
+// SetOpen makes the filter answer every name (open) or only listed ones.
+func (f *Filter) SetOpen(open bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.open = open
+}
+
+// Granted returns the destinations currently allowed for listed names.
+func (f *Filter) Granted() []netrules.Destination {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.granted)
 }
 
 // SetList switches to a new allowlist. Destinations that no entry justifies

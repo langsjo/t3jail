@@ -41,7 +41,10 @@ type HelperSpec struct {
 	// EphemeralNetworkList holds entries allowed until the VM stops. It may
 	// not exist.
 	EphemeralNetworkList string
-	DNSLog               string
+	// Files that switch the allowlist off; see netrules.LoadFilterState.
+	NetworkOffMarker      string
+	NetworkFilterOverride string
+	DNSLog                string
 	// APISocket is where the helper serves the API the daemon uses to
 	// change the filter while the VM runs.
 	APISocket string

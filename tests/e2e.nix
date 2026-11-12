@@ -231,6 +231,33 @@ pkgs.testers.runNixOSTest {
         assert not reaches("http://[${ip.other6}]")
         assert not reaches("http://[2001:db8:1::2]")
 
+    with subtest("switching the allowlist off and on"):
+        listed = t3jail("net list")
+        t3jail("net disable")
+        assert "allowlist off" in t3jail("status")
+        guest("getent hosts other.test")
+        assert reaches("http://other.test")
+        assert reaches("http://${ip.other}:8080")
+        assert not reaches("http://${lanIP}")
+        assert not reaches("http://192.168.1.1")
+        t3jail("net allow ${lanIP}/32")
+        assert reaches("http://${lanIP}")
+        t3jail("net remove ${lanIP}/32")
+
+        t3jail("net enable")
+        guest("! getent hosts other.test")
+        assert not reaches("http://${ip.other}:8080")
+        assert reaches("http://allowed.test")
+        assert t3jail("net list") == listed
+
+        t3jail("net disable -p")
+        t3jail("stop")
+        t3jail("start -c 2 -m 2G")
+        assert reaches("http://other.test")
+        t3jail("net enable -p")
+        assert not reaches("http://other.test")
+        assert t3jail("net list") == listed
+
     with subtest("mounts"):
         host.succeed("su - alice -c 'mkdir -p ~/proj ~/data && echo from-host > ~/data/f'")
         t3jail("mount add /home/alice/proj:/work")
