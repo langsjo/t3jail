@@ -61,7 +61,7 @@ func Args(s LaunchSpec) ([]string, error) {
 		"--serial", "socket=" + s.SerialSocket,
 		"--console", "off",
 		"--vsock", kv("cid", strconv.FormatUint(uint64(s.VsockCID), 10), "socket", s.VsockSocket),
-		"--rng",
+		"--rng", "src=/dev/urandom",
 	}
 	if s.Firmware != "" {
 		args = append(args, "--firmware", s.Firmware)
