@@ -46,6 +46,11 @@ func newStartCmd() *cobra.Command {
 					return err
 				}
 			}
+			// The runtime directory is on tmpfs, so it is gone after a host
+			// reboot even though the disk exists.
+			if err := inst.Ensure(); err != nil {
+				return err
+			}
 			if err := ensureNetworkList(inst); err != nil {
 				return err
 			}
