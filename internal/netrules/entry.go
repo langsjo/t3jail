@@ -65,6 +65,30 @@ func (e Entry) MatchesName(name string) bool {
 }
 
 // String is the canonical form, used to compare and store entries.
+// Covers reports whether e allows everything the name entry o allows.
+// Address entries are never covered: they are not matched by name.
+func (e Entry) Covers(o Entry) bool {
+	switch o.Kind {
+	case KindName:
+		if !e.MatchesName(o.Name) {
+			return false
+		}
+	case KindWildcard:
+		if e.Kind != KindWildcard || !e.MatchesName(o.Name) {
+			return false
+		}
+	default:
+		return false
+	}
+	// Port ranges are merged, so each of o's must lie within one of e's.
+	for _, r := range o.EffectivePorts() {
+		if !slices.ContainsFunc(e.EffectivePorts(), func(a PortRange) bool { return a.First <= r.First && r.Last <= a.Last }) {
+			return false
+		}
+	}
+	return true
+}
+
 func (e Entry) String() string {
 	var host string
 	switch e.Kind {

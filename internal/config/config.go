@@ -23,7 +23,14 @@ type Config struct {
 	// Size of the VM disk created by `t3jail init`.
 	DiskSize ByteSize `toml:"disk_size"`
 
-	T3 T3Config `toml:"t3"`
+	T3  T3Config  `toml:"t3"`
+	Net NetConfig `toml:"net"`
+}
+
+type NetConfig struct {
+	// Seconds between desktop notifications while the VM has unanswered
+	// network requests; 0 notifies only when a request arrives.
+	RequestReminderSecs int `toml:"request_reminder_secs"`
 }
 
 type T3Config struct {
@@ -70,6 +77,7 @@ func Defaults() Config {
 		Memory:   8 * GiB,
 		DiskSize: 64 * GiB,
 		T3:       T3Config{HostPort: 37730, Listen: []string{"127.0.0.1"}},
+		Net:      NetConfig{RequestReminderSecs: 60},
 	}
 }
 
@@ -105,6 +113,8 @@ func (c Config) validate() error {
 		return errors.New("max_cpu must not be negative")
 	case c.T3.HostPort == 0:
 		return errors.New("t3.host_port must be set")
+	case c.Net.RequestReminderSecs != 0 && (c.Net.RequestReminderSecs < 10 || c.Net.RequestReminderSecs > 86400):
+		return errors.New("net.request_reminder_secs must be 0 or between 10 and 86400")
 	}
 	_, err := c.T3.ListenAddrs()
 	return err
@@ -144,6 +154,12 @@ host_port = %d
 # address listed can reach T3 (its pairing tokens still apply); wildcards
 # like 0.0.0.0 are refused. The first one is used in status and pairing links.
 listen = ["127.0.0.1"]
-`, d.CPUs, d.Memory, d.DiskSize, d.T3.HostPort)
+
+[net]
+# While the VM has unanswered requests to reach blocked names
+# (t3jail-request), remind with a desktop notification every this many
+# seconds; 0 notifies only when a request arrives.
+request_reminder_secs = %d
+`, d.CPUs, d.Memory, d.DiskSize, d.T3.HostPort, d.Net.RequestReminderSecs)
 	return err
 }

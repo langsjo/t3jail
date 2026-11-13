@@ -258,6 +258,17 @@ pkgs.testers.runNixOSTest {
         assert not reaches("http://other.test")
         assert t3jail("net list") == listed
 
+    with subtest("network requests from the guest"):
+        guest("! t3jail-request 192.168.1.1")
+        guest("setsid t3jail-request other.test e2e </dev/null >/tmp/request.log 2>&1 &")
+        host.wait_until_succeeds(f"{as_alice('net requests')} | grep -q other.test", timeout=30)
+        t3jail("net allow other.test")
+        answered = shlex.quote("grep -q 'other.test: allowed' /tmp/request.log")
+        host.wait_until_succeeds(as_alice(f"ssh -- {answered}"), timeout=30)
+        assert reaches("http://other.test")
+        assert "No pending requests" in t3jail("net requests")
+        t3jail("net remove other.test")
+
     with subtest("mounts"):
         host.succeed("su - alice -c 'mkdir -p ~/proj ~/data && echo from-host > ~/data/f'")
         t3jail("mount add /home/alice/proj:/work")

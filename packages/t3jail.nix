@@ -34,7 +34,7 @@ buildGoModule {
       ../internal
     ];
   };
-  vendorHash = "sha256-w7RVEw8daTEQEoVMsNstT1kLLNJF7aUQZ8Ji5h7mmqQ=";
+  vendorHash = "sha256-akMwOj/3t6W7WUWhgFivWQXrNINpd1TfNjLeGrYs3Nk=";
 
   env.CGO_ENABLED = 0;
   subPackages = [ "cmd/t3jail" ];

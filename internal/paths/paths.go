@@ -103,8 +103,14 @@ func (i Instance) NetnsSocket() string   { return filepath.Join(i.Runtime, "netn
 func (i Instance) EphemeralNetworkList() string {
 	return filepath.Join(i.Runtime, "network.ephemeral.list")
 }
-func (i Instance) CHAPISocket() string   { return filepath.Join(i.Runtime, "ch.sock") }
-func (i Instance) VsockSocket() string   { return filepath.Join(i.Runtime, "vsock.sock") }
+func (i Instance) CHAPISocket() string { return filepath.Join(i.Runtime, "ch.sock") }
+func (i Instance) VsockSocket() string { return filepath.Join(i.Runtime, "vsock.sock") }
+
+// VsockHostSocket is where cloud-hypervisor connects when the guest dials
+// the host's vsock port.
+func (i Instance) VsockHostSocket(port uint32) string {
+	return fmt.Sprintf("%s_%d", i.VsockSocket(), port)
+}
 func (i Instance) SerialSocket() string  { return filepath.Join(i.Runtime, "serial.sock") }
 func (i Instance) ConsoleSocket() string { return filepath.Join(i.Runtime, "console.sock") }
 func (i Instance) T3Socket() string      { return filepath.Join(i.Runtime, "t3.sock") }

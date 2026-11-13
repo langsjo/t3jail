@@ -136,9 +136,12 @@ func TestLoadIgnoresRemovedGUISection(t *testing.T) {
 
 func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 	for name, content := range map[string]string{
-		"typo":      "cpus = 2\n",
-		"bad size":  "mem = \"lots\"\n",
-		"zero cpus": "cpu = 0\n",
+		"typo":              "cpus = 2\n",
+		"bad size":          "mem = \"lots\"\n",
+		"zero cpus":         "cpu = 0\n",
+		"negative reminder": "[net]\nrequest_reminder_secs = -1\n",
+		"tiny reminder":     "[net]\nrequest_reminder_secs = 1\n",
+		"huge reminder":     "[net]\nrequest_reminder_secs = 10000000000\n",
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		os.WriteFile(path, []byte(content), 0o600)

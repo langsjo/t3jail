@@ -43,6 +43,9 @@ type RunSpec struct {
 	// Host addresses forwarded to the VM's T3 server; the first is the one
 	// shown in status and used for pairing links.
 	T3Listen []netip.AddrPort
+	// RequestReminder is the interval between notifications while network
+	// requests are pending; 0 notifies only for new requests.
+	RequestReminder time.Duration
 }
 
 // RescueBoot is a direct kernel boot of the rescue system.
@@ -91,6 +94,8 @@ type Daemon struct {
 	runCtx   context.Context
 	sharesMu sync.Mutex
 	shares   map[string]*share // by guest path
+
+	requests requestQueue
 
 	stopReq chan control.StopRequest
 	vmDone  chan struct{}
@@ -167,6 +172,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if err := d.startT3Forwarder(ctx); err != nil {
 		d.log.Error("T3 forwarder unavailable", "err", err)
+	}
+	if err := d.serveRequests(ctx); err != nil {
+		d.log.Error("network requests unavailable", "err", err)
 	}
 	srv, err := d.serveControl()
 	if err != nil {
@@ -352,6 +360,8 @@ func (d *Daemon) serveControl() (*http.Server, error) {
 	mux.Handle("GET /v1/status", control.Handler(d.status))
 	mux.Handle("POST /v1/stop", control.Handler(d.stop))
 	mux.Handle("POST /v1/net/reload", control.Handler(d.reloadNetwork))
+	mux.Handle("GET /v1/net/requests", control.Handler(d.listRequests))
+	mux.Handle("POST /v1/net/requests/answer", control.Handler(d.answerRequests))
 	mux.Handle("POST /v1/resize", control.Handler(d.resize))
 	mux.Handle("POST /v1/disk/resize", control.Handler(d.resizeDisk))
 	mux.Handle("GET /v1/mounts", control.Handler(d.listMounts))
@@ -476,7 +486,7 @@ func (d *Daemon) setState(s control.State) {
 }
 
 func (d *Daemon) removeSockets() {
-	for _, s := range []string{d.inst.ControlSocket(), d.inst.NetnsSocket(), d.inst.ConsoleSocket(), d.inst.T3Socket(), d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket()} {
+	for _, s := range []string{d.inst.ControlSocket(), d.inst.NetnsSocket(), d.inst.ConsoleSocket(), d.inst.T3Socket(), d.inst.CHAPISocket(), d.inst.SerialSocket(), d.inst.VsockSocket(), d.inst.VsockHostSocket(d.abi.VsockRequestPort)} {
 		os.Remove(s)
 	}
 }

@@ -11,6 +11,7 @@
   "vsockCID": 3,
   "vsockSSHPort": 22,
   "vsockT3Port": 3773,
+  "vsockRequestPort": 3774,
   "t3Port": 3773,
   "metaTag": "t3jail-meta",
   "metaMountPoint": "/run/t3jail/host",

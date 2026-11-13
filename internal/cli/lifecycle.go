@@ -83,6 +83,8 @@ func newStartCmd() *cobra.Command {
 				Resources: resources,
 				Firmware:  os.Getenv(envFirmware),
 				T3Listen:  listen,
+
+				RequestReminder: time.Duration(cfg.Net.RequestReminderSecs) * time.Second,
 			}
 			if rescue {
 				spec.Resources = resources.ForRescue()

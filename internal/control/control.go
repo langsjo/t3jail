@@ -66,6 +66,27 @@ type StopRequest struct {
 	Timeout time.Duration `json:"timeout"`
 }
 
+// NetRequest is a guest's request to allow a destination (t3jail-request).
+// Entry and Reason come from the guest: escape them before printing.
+type NetRequest struct {
+	Entry  string    `json:"entry"`
+	Reason string    `json:"reason"`
+	Time   time.Time `json:"time"`
+}
+
+// Answers sent back to a waiting t3jail-request.
+const (
+	AnswerAllowed     = "allowed"
+	AnswerAllowedPerm = "allowed permanently"
+	AnswerDenied      = "denied"
+)
+
+// AnswerNetRequestsRequest answers pending requests, by entry. Entries
+// without a pending request are ignored.
+type AnswerNetRequestsRequest struct {
+	Answers map[string]string `json:"answers"`
+}
+
 // ErrNotRunning means no daemon is listening on the control socket.
 var ErrNotRunning = errors.New("the VM is not running")
 
@@ -124,6 +145,16 @@ func (c *Client) ResizeDisk(ctx context.Context, req DiskResizeRequest) error {
 // ReloadNetwork makes the running VM use the current network.list.
 func (c *Client) ReloadNetwork(ctx context.Context) error {
 	return c.Call(ctx, http.MethodPost, "/v1/net/reload", nil, nil)
+}
+
+func (c *Client) NetRequests(ctx context.Context) ([]NetRequest, error) {
+	var out []NetRequest
+	err := c.Call(ctx, http.MethodGet, "/v1/net/requests", nil, &out)
+	return out, err
+}
+
+func (c *Client) AnswerNetRequests(ctx context.Context, answers map[string]string) error {
+	return c.Call(ctx, http.MethodPost, "/v1/net/requests/answer", AnswerNetRequestsRequest{Answers: answers}, nil)
 }
 
 // Call sends body (if not nil) as JSON and decodes the response into out.

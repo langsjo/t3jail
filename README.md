@@ -44,7 +44,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `stop [--force]`, `status [--json]` | Shut it down; show its state and size. |
 | `ssh [-- cmd]`, `console` | Shell over SSH; serial console (Ctrl-] detaches). |
 | `logs [-f] [--log serial\|dns\|daemon]` | Logs. |
-| `net allow\|remove\|list\|log\|reload` | Network allowlist, see below. |
+| `net allow\|remove\|list\|log\|reload\|requests` | Network allowlist, see below. |
 | `mount add\|remove\|list` | Share host directories, see below. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
 | `config pull\|push [--switch]` | Sync the VM's `/etc/nixos` with a host clone. |
@@ -91,6 +91,19 @@ Private, loopback, link-local, CGNAT and other special-purpose ranges, and the
 host's own addresses and local networks (followed live, so a VPN coming up is
 covered), are blocked even if an allowed name resolves to them. An explicit
 address or network entry overrides that block.
+
+Agents can ask for a blocked name instead of working around it:
+
+    t3jail-request registry.npmjs.org "install the frontend's dependencies"   # in the VM
+
+This waits until you answer and exits 0 if allowed. You get a desktop
+notification (if `notify-send` is installed), repeated every minute while
+requests are unanswered (`[net] request_reminder_secs` in config.toml, 0 for
+none); `t3jail net requests` lists the
+pending requests and lets you mark each as kept blocked, allowed until the VM
+stops, or allowed permanently. `t3jail net allow` also answers matching
+requests. Only names can be requested, not addresses, so a request never
+overrides the block of private and host networks.
 
 To let the VM reach any internet destination for a while without editing the
 allowlist:

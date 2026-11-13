@@ -39,7 +39,7 @@ allowed until the entry that caused them is removed or the VM restarts.
 ` + "`t3jail net disable`" + ` lets the VM reach any internet destination for a while
 without changing the allowlist; ` + "`t3jail net enable`" + ` applies it again.`,
 	}
-	cmd.AddCommand(newNetAllowCmd(), newNetRemoveCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(),
+	cmd.AddCommand(newNetAllowCmd(), newNetRemoveCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(), newNetRequestsCmd(),
 		newNetSwitchCmd(true), newNetSwitchCmd(false))
 	return cmd
 }
@@ -61,58 +61,93 @@ func newNetAllowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := control.NewClient(inst.ControlSocket())
-			if !persistent {
-				if _, err := client.Status(cmd.Context()); err != nil {
-					if errors.Is(err, control.ErrNotRunning) {
-						return errors.New("the VM is not running; use --persistent to allow from the next start on")
-					}
-					return err
-				}
-			}
-
-			var added []netrules.Entry
-			err = withNetworkLists(inst, func(lists networkLists) error {
-				target := lists.ephemeral
-				if persistent {
-					target = lists.persistent
-				}
-				for _, e := range entries {
-					if lists.persistent.Contains(e) {
-						fmt.Printf("%s is already allowed permanently\n", e)
-					} else if !target.Add(e) {
-						fmt.Printf("%s is already allowed\n", e)
-					} else {
-						added = append(added, e)
-					}
-				}
-				return nil
-			})
-			if err != nil || len(added) == 0 {
-				return err
-			}
-			running, err := applyNetwork(cmd.Context(), client)
-			if err != nil {
-				return err
-			}
-			if !running && !persistent {
-				// The VM stopped after the check above. The entry is discarded
-				// when the VM next starts.
-				return errors.New("the VM stopped before the change applied; nothing was allowed")
-			}
-			until := "until the VM stops"
-			if persistent {
-				until = "permanently"
-			}
-			for _, e := range added {
-				fmt.Printf("Allowed %s %s\n", e, until)
-			}
-			printIfStopped(running)
-			return nil
+			return allowEntries(cmd.Context(), inst, entries, persistent)
 		},
 	}
 	cmd.Flags().BoolVarP(&persistent, "persistent", "p", false, "save the entry in network.list so it survives restarts")
 	return cmd
+}
+
+// allowEntries adds entries to the allowlist, applies it, and answers the
+// guest's pending requests they cover.
+func allowEntries(ctx context.Context, inst paths.Instance, entries []netrules.Entry, persistent bool) error {
+	client := control.NewClient(inst.ControlSocket())
+	if !persistent {
+		if _, err := client.Status(ctx); err != nil {
+			if errors.Is(err, control.ErrNotRunning) {
+				return errors.New("the VM is not running; use --persistent to allow from the next start on")
+			}
+			return err
+		}
+	}
+
+	var added []netrules.Entry
+	err := withNetworkLists(inst, func(lists networkLists) error {
+		target := lists.ephemeral
+		if persistent {
+			target = lists.persistent
+		}
+		for _, e := range entries {
+			if lists.persistent.Contains(e) {
+				fmt.Printf("%s is already allowed permanently\n", e)
+			} else if !target.Add(e) {
+				fmt.Printf("%s is already allowed\n", e)
+			} else {
+				added = append(added, e)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	running := true
+	if len(added) > 0 {
+		if running, err = applyNetwork(ctx, client); err != nil {
+			return err
+		}
+		if !running && !persistent {
+			// The VM stopped after the check above. The entry is discarded
+			// when the VM next starts.
+			return errors.New("the VM stopped before the change applied; nothing was allowed")
+		}
+	}
+	until, answer := "until the VM stops", control.AnswerAllowed
+	if persistent {
+		until, answer = "permanently", control.AnswerAllowedPerm
+	}
+	for _, e := range added {
+		fmt.Printf("Allowed %s %s\n", e, until)
+	}
+	printIfStopped(running)
+	if running {
+		answerCovered(ctx, client, entries, answer)
+	}
+	return nil
+}
+
+// answerCovered answers the pending requests that entries cover. Best effort:
+// the allowlist change is what matters.
+func answerCovered(ctx context.Context, client *control.Client, entries []netrules.Entry, answer string) {
+	reqs, err := client.NetRequests(ctx)
+	if err != nil {
+		return
+	}
+	answers := map[string]string{}
+	for _, r := range reqs {
+		re, err := netrules.Parse(r.Entry)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Covers(re) {
+				answers[r.Entry] = answer
+			}
+		}
+	}
+	if len(answers) > 0 {
+		client.AnswerNetRequests(ctx, answers)
+	}
 }
 
 func newNetRemoveCmd() *cobra.Command {

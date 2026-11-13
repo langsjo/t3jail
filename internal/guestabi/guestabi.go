@@ -27,6 +27,7 @@ type ABI struct {
 	VsockCID           uint32     `json:"vsockCID"`
 	VsockSSHPort       uint32     `json:"vsockSSHPort"`
 	VsockT3Port        uint32     `json:"vsockT3Port"`
+	VsockRequestPort   uint32     `json:"vsockRequestPort"`
 	T3Port             uint16     `json:"t3Port"`
 	MetaTag            string     `json:"metaTag"`
 	MetaMountPoint     string     `json:"metaMountPoint"`

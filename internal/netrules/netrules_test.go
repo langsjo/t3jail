@@ -151,3 +151,34 @@ func TestPrefixes(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestCovers(t *testing.T) {
+	for _, tc := range []struct {
+		allow, req string
+		want       bool
+	}{
+		{"example.com", "example.com", true},
+		{"example.com", "example.com:443", true},
+		{"example.com:443", "example.com", false},
+		{"*.example.com", "api.example.com", true},
+		{"*.example.com", "*.api.example.com", true},
+		{"api.example.com", "*.api.example.com", false},
+		{"example.com:1-1000", "example.com:22,80", true},
+		{"other.com", "example.com", false},
+		{"192.0.2.1", "example.com", false},
+	} {
+		a, b := mustParse(t, tc.allow), mustParse(t, tc.req)
+		if got := a.Covers(b); got != tc.want {
+			t.Errorf("%s covers %s = %v, want %v", tc.allow, tc.req, got, tc.want)
+		}
+	}
+}
+
+func mustParse(t *testing.T, s string) Entry {
+	t.Helper()
+	e, err := Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
