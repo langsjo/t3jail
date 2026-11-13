@@ -79,6 +79,9 @@ const (
 	AnswerAllowed     = "allowed"
 	AnswerAllowedPerm = "allowed permanently"
 	AnswerDenied      = "denied"
+	// These start with "allowed": t3jail-request matches on that prefix.
+	AnswerAlreadyAllowed = "allowed already"
+	AnswerAllowlistOff   = "allowed: the allowlist is off"
 )
 
 // AnswerNetRequestsRequest answers pending requests, by entry. Entries

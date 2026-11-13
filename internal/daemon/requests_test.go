@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/langsjo/t3jail/internal/control"
+	"github.com/langsjo/t3jail/internal/paths"
 )
 
 func TestParseRequest(t *testing.T) {
@@ -40,6 +43,24 @@ func TestParseRequest(t *testing.T) {
 	long, _ := parseRequest("a.example\t" + strings.Repeat("é", 500))
 	if n := len([]rune(long.Reason)); n != maxReasonRunes+1 {
 		t.Errorf("long reason kept %d runes", n)
+	}
+}
+
+func TestListsCover(t *testing.T) {
+	dir := t.TempDir()
+	perm := filepath.Join(dir, "network.list")
+	os.WriteFile(perm, []byte("*.example.org\napi.example.com:8443\n"), 0o600)
+	files := []string{perm, filepath.Join(dir, "missing.list")}
+	for entry, want := range map[string]bool{
+		"pkg.example.org":      true,
+		"*.sub.example.org":    true,
+		"api.example.com:8443": true,
+		"api.example.com":      false, // default ports are not covered by 8443
+		"other.example":        false,
+	} {
+		if got := listsCover(files, entry); got != want {
+			t.Errorf("listsCover(%q) = %v, want %v", entry, got, want)
+		}
 	}
 }
 
@@ -130,7 +151,8 @@ func TestToNotify(t *testing.T) {
 }
 
 func TestHandleRequest(t *testing.T) {
-	d := &Daemon{log: slog.New(slog.DiscardHandler)}
+	dir := t.TempDir()
+	d := &Daemon{log: slog.New(slog.DiscardHandler), inst: paths.Instance{Config: dir, Runtime: dir}}
 	ctx := context.Background()
 
 	ask := func(line string) *bufio.Reader {
@@ -161,5 +183,14 @@ func TestHandleRequest(t *testing.T) {
 	d.requests.answer(map[string]string{"example.com": control.AnswerDenied})
 	if got := readLine(r); got != "denied\n" {
 		t.Errorf("answer: %q", got)
+	}
+
+	os.WriteFile(d.inst.NetworkList(), []byte("*.example.org\n"), 0o600)
+	if got := readLine(ask("pkg.example.org\n")); got != control.AnswerAlreadyAllowed+"\n" {
+		t.Errorf("allowed name: %q", got)
+	}
+	os.WriteFile(d.inst.NetworkOffMarker(), nil, 0o600)
+	if got := readLine(ask("other.example\n")); got != control.AnswerAllowlistOff+"\n" {
+		t.Errorf("allowlist off: %q", got)
 	}
 }

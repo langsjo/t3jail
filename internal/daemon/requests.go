@@ -6,8 +6,9 @@ package daemon
 //
 // Protocol, lines both ways: the guest sends "ENTRY\tREASON\n"; the daemon
 // replies "pending\n" (or "error: ...\n" and closes), then, once the user
-// decides, one of the control.Answer* values and closes. Everything the guest
-// sends is untrusted.
+// decides, one of the control.Answer* values and closes. If the entry is
+// already allowed, or the allowlist is off, it answers at once instead.
+// Everything the guest sends is untrusted.
 
 import (
 	"bufio"
@@ -17,7 +18,9 @@ import (
 	"html"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +153,41 @@ func parseRequest(line string) (control.NetRequest, error) {
 	return control.NetRequest{Entry: e.String(), Reason: reason, Time: time.Now()}, nil
 }
 
+// answerNow returns the answer for an entry that needs no decision, or "".
+func (d *Daemon) answerNow(entry string) string {
+	// The daemon's own VM is running, so the override applies.
+	if state, err := netrules.LoadFilterState(d.inst.NetworkOffMarker(), d.inst.NetworkFilterOverride()); err == nil && state.Off {
+		return control.AnswerAllowlistOff
+	}
+	if listsCover([]string{d.inst.NetworkList(), d.inst.EphemeralNetworkList()}, entry) {
+		return control.AnswerAlreadyAllowed
+	}
+	return ""
+}
+
+// listsCover reports whether an entry in the allowlist files covers entry.
+// Missing or unreadable files cover nothing: the request then goes to the user.
+func listsCover(files []string, entry string) bool {
+	e, err := netrules.Parse(entry)
+	if err != nil {
+		return false
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		list, err := netrules.ParseList(data)
+		if err != nil {
+			continue
+		}
+		if slices.ContainsFunc(list.Entries(), func(a netrules.Entry) bool { return a.Covers(e) }) {
+			return true
+		}
+	}
+	return false
+}
+
 // serveRequests accepts the guest's connections to the request port.
 func (d *Daemon) serveRequests(ctx context.Context) error {
 	l, err := listenUnix(d.inst.VsockHostSocket(d.abi.VsockRequestPort))
@@ -184,6 +222,12 @@ func (d *Daemon) handleRequest(ctx context.Context, conn net.Conn) {
 		return
 	}
 	req, err := parseRequest(line)
+	if err == nil {
+		if a := d.answerNow(req.Entry); a != "" {
+			fmt.Fprintf(conn, "%s\n", a)
+			return
+		}
+	}
 	var answer <-chan string
 	if err == nil {
 		answer, err = d.requests.add(req)
