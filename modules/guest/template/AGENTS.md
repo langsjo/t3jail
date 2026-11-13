@@ -21,4 +21,5 @@ Update the base module and nixpkgs:
     nix flake update --flake /etc/nixos
 
 Network access is limited by an allowlist on the host. A blocked download fails
-immediately (connection refused / DNS REFUSED); ask the user to allow the domain.
+immediately (connection refused / DNS REFUSED). Request the domain with
+`t3jail-request NAME "REASON"`; it waits for the user's answer.
