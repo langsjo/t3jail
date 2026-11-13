@@ -31,14 +31,16 @@ type Status struct {
 	PID    int   `json:"pid"`
 	Rescue bool  `json:"rescue"`
 	// GuestReady is true once the guest's SSH server answers.
-	GuestReady bool      `json:"guestReady"`
-	CPUs       int       `json:"cpus"`
-	MaxCPUs    int       `json:"maxCpus"`
-	Memory     uint64    `json:"memory"`
-	MaxMemory  uint64    `json:"maxMemory"`
-	BootMemory uint64    `json:"bootMemory"`
-	T3URL      string    `json:"t3Url"`
-	Started    time.Time `json:"started"`
+	GuestReady bool   `json:"guestReady"`
+	CPUs       int    `json:"cpus"`
+	MaxCPUs    int    `json:"maxCpus"`
+	Memory     uint64 `json:"memory"`
+	MaxMemory  uint64 `json:"maxMemory"`
+	BootMemory uint64 `json:"bootMemory"`
+	T3URL      string `json:"t3Url"`
+	// T3Listen lists every host address forwarded to T3, as ip:port.
+	T3Listen []string  `json:"t3Listen"`
+	Started  time.Time `json:"started"`
 }
 
 // ResizeRequest changes the running VM's size; zero leaves a value as it is.

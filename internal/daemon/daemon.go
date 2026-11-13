@@ -12,11 +12,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -38,9 +38,11 @@ type RunSpec struct {
 	Resources vmspec.Resources
 	// Firmware boots the VM's disk; Rescue, if set, boots the rescue system
 	// instead.
-	Firmware   string
-	Rescue     *RescueBoot
-	T3HostPort uint16
+	Firmware string
+	Rescue   *RescueBoot
+	// Host addresses forwarded to the VM's T3 server; the first is the one
+	// shown in status and used for pairing links.
+	T3Listen []netip.AddrPort
 }
 
 // RescueBoot is a direct kernel boot of the rescue system.
@@ -313,22 +315,32 @@ func (d *Daemon) startT3Forwarder(ctx context.Context) error {
 	dial := func(ctx context.Context) (net.Conn, error) {
 		return vsock.Dial(ctx, d.inst.VsockSocket(), d.abi.VsockT3Port)
 	}
-	tcp, err := net.Listen("tcp", d.t3Addr())
-	if err != nil {
-		return fmt.Errorf("listening on %s: %w", d.t3Addr(), err)
+	if len(d.spec.T3Listen) == 0 {
+		return errors.New("no T3 listen address in the run spec")
+	}
+	var listeners []net.Listener
+	closeAll := func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}
+	for _, addr := range d.spec.T3Listen {
+		l, err := listenFreebind(ctx, addr)
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("listening on %s for T3: %w", addr, err)
+		}
+		listeners = append(listeners, l)
 	}
 	unixL, err := listenUnix(d.inst.T3Socket())
 	if err != nil {
-		tcp.Close()
+		closeAll()
 		return err
 	}
-	go vsock.Forward(ctx, tcp, dial, d.log)
-	go vsock.Forward(ctx, unixL, dial, d.log)
+	for _, l := range append(listeners, unixL) {
+		go vsock.Forward(ctx, l, dial, d.log)
+	}
 	return nil
-}
-
-func (d *Daemon) t3Addr() string {
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(int(d.spec.T3HostPort)))
 }
 
 func (d *Daemon) serveControl() (*http.Server, error) {
@@ -360,8 +372,11 @@ func (d *Daemon) status(ctx context.Context, _ control.Empty) (control.Status, e
 		MaxCPUs:    d.spec.Resources.MaxCPUs,
 		MaxMemory:  uint64(d.spec.Resources.MaxMemory),
 		BootMemory: uint64(d.spec.Resources.SplitMemory().Boot),
-		T3URL:      "http://" + d.t3Addr(),
+		T3URL:      "http://" + d.spec.T3Listen[0].String(),
 		Started:    d.started,
+	}
+	for _, addr := range d.spec.T3Listen {
+		st.T3Listen = append(st.T3Listen, addr.String())
 	}
 	d.mu.Unlock()
 	if info, err := d.ch.Info(ctx); err == nil {

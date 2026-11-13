@@ -75,10 +75,14 @@ func newStartCmd() *cobra.Command {
 			if err := resources.Validate(); err != nil {
 				return err
 			}
+			listen, err := cfg.T3.ListenAddrs()
+			if err != nil {
+				return err
+			}
 			spec := daemon.RunSpec{
-				Resources:  resources,
-				Firmware:   os.Getenv(envFirmware),
-				T3HostPort: cfg.T3.HostPort,
+				Resources: resources,
+				Firmware:  os.Getenv(envFirmware),
+				T3Listen:  listen,
 			}
 			if rescue {
 				spec.Resources = resources.ForRescue()
@@ -160,6 +164,9 @@ func start(ctx context.Context, inst paths.Instance, spec daemon.RunSpec) error 
 		}
 		if err == nil && st.GuestReady {
 			fmt.Printf("VM is running.\n  T3 Code: %s\n  Shell:   t3jail ssh\n", st.T3URL)
+			for _, addr := range absentListenAddrs(st.T3Listen) {
+				fmt.Printf("Note: this host has no address %s yet; T3 is reachable there once it does.\n", addr)
+			}
 			return nil
 		}
 	}
@@ -302,6 +309,9 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("vCPUs:   %d (max %d)\n", st.CPUs, st.MaxCPUs)
 			fmt.Printf("memory:  %v (boot %v, max %v)\n", config.ByteSize(st.Memory), config.ByteSize(st.BootMemory), config.ByteSize(st.MaxMemory))
 			fmt.Printf("T3 Code: %s\n", st.T3URL)
+			if len(st.T3Listen) > 1 || len(absentListenAddrs(st.T3Listen)) > 0 {
+				fmt.Printf("listen:  %s\n", describeListen(st.T3Listen))
+			}
 			if state, err := filterState(inst, true); err == nil && describeFilterState(state) != "" {
 				fmt.Printf("network: %s\n", describeFilterState(state))
 			}

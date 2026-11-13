@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -25,8 +27,41 @@ type Config struct {
 }
 
 type T3Config struct {
-	// Port on 127.0.0.1 forwarded to the VM's T3 server.
+	// Host port forwarded to the VM's T3 server.
 	HostPort uint16 `toml:"host_port"`
+	// Host addresses the port listens on: "ip" (on HostPort) or "ip:port".
+	// The first one is used in the URL that status and pairing links show.
+	Listen []string `toml:"listen"`
+}
+
+// ListenAddrs resolves Listen against HostPort. Wildcard addresses are
+// refused: they would expose T3 to every network the host joins.
+func (t T3Config) ListenAddrs() ([]netip.AddrPort, error) {
+	if len(t.Listen) == 0 {
+		return nil, errors.New("t3.listen must list at least one address")
+	}
+	addrs := make([]netip.AddrPort, 0, len(t.Listen))
+	for _, s := range t.Listen {
+		ap, err := netip.ParseAddrPort(s)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(s)
+			if addrErr != nil {
+				return nil, fmt.Errorf("t3.listen: %q is not an IP address or ip:port (IPv6 with a port is [addr]:port)", s)
+			}
+			ap = netip.AddrPortFrom(addr, t.HostPort)
+		}
+		ap = netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
+		switch {
+		case ap.Port() == 0:
+			return nil, fmt.Errorf("t3.listen: %q has port 0", s)
+		case ap.Addr().IsUnspecified():
+			return nil, fmt.Errorf("t3.listen: %q would listen on every network; list specific addresses", s)
+		case slices.Contains(addrs, ap):
+			return nil, fmt.Errorf("t3.listen: %s is listed twice", ap)
+		}
+		addrs = append(addrs, ap)
+	}
+	return addrs, nil
 }
 
 func Defaults() Config {
@@ -34,7 +69,7 @@ func Defaults() Config {
 		CPUs:     4,
 		Memory:   8 * GiB,
 		DiskSize: 64 * GiB,
-		T3:       T3Config{HostPort: 37730},
+		T3:       T3Config{HostPort: 37730, Listen: []string{"127.0.0.1"}},
 	}
 }
 
@@ -71,7 +106,8 @@ func (c Config) validate() error {
 	case c.T3.HostPort == 0:
 		return errors.New("t3.host_port must be set")
 	}
-	return nil
+	_, err := c.T3.ListenAddrs()
+	return err
 }
 
 // WriteDefault creates a commented config file at path unless one exists.
@@ -100,8 +136,14 @@ max_mem = "0"
 disk_size = %q
 
 [t3]
-# The T3 server is reachable at http://127.0.0.1:<host_port>.
+# The T3 server is forwarded to this port on the host.
 host_port = %d
+# Host addresses to listen on, as "ip" (on host_port) or "ip:port"; IPv6 with
+# a port is "[addr]:port". An address the host does not have yet, such as a
+# Tailscale IP before Tailscale is up, works as soon as it appears. Every
+# address listed can reach T3 (its pairing tokens still apply); wildcards
+# like 0.0.0.0 are refused. The first one is used in status and pairing links.
+listen = ["127.0.0.1"]
 `, d.CPUs, d.Memory, d.DiskSize, d.T3.HostPort)
 	return err
 }

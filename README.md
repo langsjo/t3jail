@@ -160,6 +160,19 @@ Settings > Connections.
 Turn off the desktop app's local environment in its settings. It runs agents
 directly on the host, outside the VM, and the app shows it next to the VM.
 
+To use it from other devices, list more host addresses in `[t3] listen`,
+e.g. your Tailscale IP:
+
+    [t3]
+    listen = ["127.0.0.1", "100.101.102.103"]
+
+An address the host does not have yet (Tailscale still connecting) works as
+soon as it appears; `start` and `status` point out such addresses, in case of
+a typo. Wildcards like `0.0.0.0` are refused. For a client elsewhere, replace
+`http://127.0.0.1:37730` in the pairing link with the address it uses.
+Alternatively, `tailscale serve --bg http://127.0.0.1:37730` publishes the
+port to your tailnet with HTTPS and needs no change here.
+
 ## Recovery
 
 If the VM no longer boots after a configuration change:
@@ -204,8 +217,9 @@ host:
    capabilities in its own user and network namespace; virtiofsd runs in its
    namespace sandbox.
 
-The T3 port on `127.0.0.1` is reachable by other local users; T3's pairing
-tokens protect it. All other control sockets are readable only by you.
+The T3 port is reachable by other local users, and by anything that can reach
+the other addresses in `[t3] listen`; T3's pairing tokens protect it. All
+other control sockets are readable only by you.
 
 ## Verifying it
 
