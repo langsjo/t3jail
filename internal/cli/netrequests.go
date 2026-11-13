@@ -129,8 +129,13 @@ func (p *picker) key(k string) (done, apply bool) {
 	return false, false
 }
 
-const pickHelp = "↑/↓ move, space cycles, enter applies (unmarked stay blocked), q quits and leaves all pending\r\n" +
-	"[ ] keep blocked   [✓] allow until the VM stops   [P] allow permanently\r\n"
+var pickHelp = [...]string{
+	"↑/↓ move, space cycles, enter applies (unmarked stay blocked), q leaves all pending",
+	"[ ] keep blocked   [✓] allow until the VM stops   [P] allow permanently",
+}
+
+// maxPickRows keeps the menu small; longer lists scroll.
+const maxPickRows = 10
 
 // pick shows lines with a choice each and returns the choices, or ok=false if
 // the user quit.
@@ -141,29 +146,47 @@ func pick(in *os.File, out io.Writer, lines []string) (choices []choice, ok bool
 		return nil, false, err
 	}
 	defer term.Restore(fd, state)
-	// Draw on the alternate screen, from the top each time, so nothing
-	// depends on how many rows the previous frame took.
-	fmt.Fprint(out, "\x1b[?1049h")
-	defer fmt.Fprint(out, "\x1b[?1049l")
+
+	// Draw below the prompt rather than on the alternate screen, so the
+	// shell's history stays visible. Every row is truncated to the terminal
+	// width, so moving up by the number of rows drawn reaches the menu's top.
+	drawn := 0
+	erase := func() {
+		if drawn > 0 {
+			fmt.Fprintf(out, "\x1b[%dA", drawn)
+		}
+		fmt.Fprint(out, "\r\x1b[J")
+	}
+	fmt.Fprint(out, "\x1b[?25l")
+	defer func() {
+		erase()
+		fmt.Fprint(out, "\x1b[?25h")
+	}()
 
 	p := &picker{choices: make([]choice, len(lines))}
 	buf := make([]byte, 16)
 	for {
 		width, height, err := term.GetSize(fd)
-		if err != nil {
+		if err != nil || width <= 0 || height <= 0 {
 			width, height = 80, 24
 		}
-		fmt.Fprint(out, "\x1b[H\x1b[2J"+pickHelp)
+		erase()
+		var frame strings.Builder
+		for _, h := range pickHelp {
+			frame.WriteString(truncate(h, width-1) + "\r\n")
+		}
 		// Show the rows that fit, keeping the cursor visible.
-		rows := max(height-3, 1)
+		rows := max(min(len(lines), maxPickRows, height-len(pickHelp)-1), 1)
 		first := max(p.cursor-rows+1, 0)
-		for i := first; i < min(first+rows, len(lines)); i++ {
+		for i := first; i < first+rows; i++ {
 			cur := "  "
 			if i == p.cursor {
 				cur = "> "
 			}
-			fmt.Fprintf(out, "%s\r\n", truncate(cur+marks[p.choices[i]]+" "+lines[i], width-1))
+			frame.WriteString(truncate(cur+marks[p.choices[i]]+" "+lines[i], width-1) + "\r\n")
 		}
+		fmt.Fprint(out, frame.String())
+		drawn = len(pickHelp) + rows
 		n, err := in.Read(buf)
 		if err != nil {
 			return nil, false, err
