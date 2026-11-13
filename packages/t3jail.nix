@@ -10,6 +10,7 @@
   gitMinimal,
   nix,
   util-linux,
+  libnotify,
   OVMF-cloud-hypervisor,
   guest-image,
   rescue,
@@ -58,6 +59,7 @@ buildGoModule {
           gitMinimal
           nix
           util-linux
+          libnotify # notify-send, for request reminders
         ]
       } \
       --set-default T3JAIL_FIRMWARE ${OVMF-cloud-hypervisor.fd}/FV/CLOUDHV.fd \
