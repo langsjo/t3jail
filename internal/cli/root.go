@@ -39,6 +39,7 @@ func NewRoot() *cobra.Command {
 		newConfigCmd(),
 		newGitCmd(),
 		newDiskCmd(),
+		newPortCmd(),
 		newDaemonCmd(),
 		newNetnsHelperCmd(),
 		newVsockProxyCmd(),

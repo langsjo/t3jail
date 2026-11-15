@@ -112,7 +112,7 @@ func Forward(ctx context.Context, l net.Listener, dial func(context.Context) (ne
 		go func() {
 			upstream, err := dial(ctx)
 			if err != nil {
-				log.Warn("forward: cannot reach guest", "listener", l.Addr(), "err", err)
+				log.Warn("forward: cannot connect", "listener", l.Addr(), "err", err)
 				conn.Close()
 				return
 			}

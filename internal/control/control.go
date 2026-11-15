@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"syscall"
 	"time"
 
@@ -90,6 +91,47 @@ type AnswerNetRequestsRequest struct {
 	Answers map[string]string `json:"answers"`
 }
 
+// PortDirection says which side of a port forward listens.
+type PortDirection string
+
+const (
+	// PortToVM listens on the host and connects to the VM.
+	PortToVM PortDirection = "to"
+	// PortFromVM listens in the VM and connects to the host.
+	PortFromVM PortDirection = "from"
+)
+
+// PortForward forwards a TCP port between the host and the VM. Listen is on
+// one side, Target (on localhost) on the other. A forward is identified by
+// Direction and Listen.
+type PortForward struct {
+	Direction PortDirection `json:"direction"`
+	// Bind is the host address a PortToVM forward listens on.
+	Bind   netip.Addr `json:"bind,omitzero"`
+	Listen uint16     `json:"listen"`
+	Target uint16     `json:"target"`
+}
+
+// DefaultPortBind is where PortToVM forwards listen unless Bind says otherwise.
+var DefaultPortBind = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+
+func (f PortForward) String() string {
+	if f.Direction == PortFromVM {
+		return fmt.Sprintf("VM localhost:%d -> host localhost:%d", f.Listen, f.Target)
+	}
+	bind := f.Bind
+	if !bind.IsValid() {
+		bind = DefaultPortBind
+	}
+	return fmt.Sprintf("host %s -> VM localhost:%d", netip.AddrPortFrom(bind, f.Listen), f.Target)
+}
+
+// ClosePortRequest closes the forward listening on Listen.
+type ClosePortRequest struct {
+	Direction PortDirection `json:"direction"`
+	Listen    uint16        `json:"listen"`
+}
+
 // ErrNotRunning means no daemon is listening on the control socket.
 var ErrNotRunning = errors.New("the VM is not running")
 
@@ -158,6 +200,23 @@ func (c *Client) NetRequests(ctx context.Context) ([]NetRequest, error) {
 
 func (c *Client) AnswerNetRequests(ctx context.Context, answers map[string]string) error {
 	return c.Call(ctx, http.MethodPost, "/v1/net/requests/answer", AnswerNetRequestsRequest{Answers: answers}, nil)
+}
+
+// OpenPort starts a forward and returns it with defaults filled in.
+func (c *Client) OpenPort(ctx context.Context, f PortForward) (PortForward, error) {
+	var out PortForward
+	err := c.Call(ctx, http.MethodPost, "/v1/ports", f, &out)
+	return out, err
+}
+
+func (c *Client) ClosePort(ctx context.Context, req ClosePortRequest) error {
+	return c.Call(ctx, http.MethodPost, "/v1/ports/close", req, nil)
+}
+
+func (c *Client) Ports(ctx context.Context) ([]PortForward, error) {
+	var out []PortForward
+	err := c.Call(ctx, http.MethodGet, "/v1/ports", nil, &out)
+	return out, err
 }
 
 // Call sends body (if not nil) as JSON and decodes the response into out.

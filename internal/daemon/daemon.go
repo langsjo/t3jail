@@ -96,6 +96,7 @@ type Daemon struct {
 	shares   map[string]*share // by guest path
 
 	requests requestQueue
+	ports    *portForwards
 
 	stopReq chan control.StopRequest
 	vmDone  chan struct{}
@@ -123,6 +124,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	d.runCtx = ctx
+	d.ports = newPortForwards(ctx, d.dialGuestSSH, d.log)
 
 	lock, err := lockFile(d.inst.DaemonLock())
 	if err != nil {
@@ -367,6 +369,9 @@ func (d *Daemon) serveControl() (*http.Server, error) {
 	mux.Handle("GET /v1/mounts", control.Handler(d.listMounts))
 	mux.Handle("POST /v1/mounts", control.Handler(d.addMount))
 	mux.Handle("POST /v1/mounts/remove", control.Handler(d.removeMount))
+	mux.Handle("GET /v1/ports", control.Handler(d.listPorts))
+	mux.Handle("POST /v1/ports", control.Handler(d.openPort))
+	mux.Handle("POST /v1/ports/close", control.Handler(d.closePort))
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(l)
 	return srv, nil
