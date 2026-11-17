@@ -46,7 +46,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `logs [-f] [--log serial\|dns\|daemon]` | Logs. |
 | `net allow\|remove\|list\|log\|reload\|requests` | Network allowlist, see below. |
 | `mount add\|remove\|list` | Share host directories, see below. |
-| `port open\|close to\|from PORT[:PORT]...`, `port list` | Forward TCP ports into (`to`) or out of (`from`) the VM until closed or the VM stops. |
+| `port open\|close to\|from PORT[:PORT]...`, `port list` | Forward TCP ports into (`to`) or out of (`from`) the VM until closed or the VM stops; `open --persist` also opens them at every start. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
 | `config pull\|push [--switch]` | Sync the VM's `/etc/nixos` with a host clone. |
 | `git pull\|push [-r/--repo REPO] [-b/--branch BRANCH]` | Sync a branch between this checkout and a repository in the VM. |
@@ -61,8 +61,8 @@ Every command has `--help`.
 - `~/.config/t3jail/default/config.toml`: default CPUs, memory, disk size, T3
   port, desktop app command.
 - `~/.config/t3jail/default/network.list`: the allowlist.
-- `~/.local/state/t3jail/default/`: the VM disk, SSH key, persisted mounts,
-  logs.
+- `~/.local/state/t3jail/default/`: the VM disk, SSH key, persisted mounts
+  and port forwards, logs.
 - `$XDG_RUNTIME_DIR/t3jail/default/`: sockets, readable only by you.
 
 ### Network allowlist

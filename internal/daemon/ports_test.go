@@ -210,6 +210,49 @@ func TestPortOpenRejects(t *testing.T) {
 	}
 }
 
+func TestKeepOpenReopensAfterTheGuestReboots(t *testing.T) {
+	guests := make(chan *fakeGuest, 1)
+	p := testPorts(t, guests)
+	listen := freePort(t)
+	persisted := []control.PortForward{{Direction: control.PortToVM, Listen: listen, Target: 3000}}
+	go p.keepOpen(func(ctx context.Context) bool { return ctx.Err() == nil },
+		func() ([]control.PortForward, error) { return persisted, nil })
+
+	hostAddr := fmt.Sprintf("127.0.0.1:%d", listen)
+	before := newFakeGuest(map[string]string{"localhost:3000": echoServer(t, "before")})
+	guests <- before
+	waitFor(t, "the persisted forward", func() bool { return roundTrip(t, hostAddr) == "before: hi\n" })
+
+	before.Close()
+	guests <- newFakeGuest(map[string]string{"localhost:3000": echoServer(t, "after")})
+	waitFor(t, "the forward to reopen", func() bool { return roundTrip(t, hostAddr) == "after: hi\n" })
+}
+
+func TestKeepOpenRetriesWhileTheGuestDoesNotAnswer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	guest := newFakeGuest(map[string]string{"localhost:3000": echoServer(t, "guest")})
+	var mu sync.Mutex
+	attempts := 0
+	dial := func(context.Context) (guestConn, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if attempts++; attempts < 3 {
+			return nil, fmt.Errorf("connection refused")
+		}
+		return guest, nil
+	}
+	p := newPortForwards(ctx, dial, slog.New(slog.DiscardHandler))
+	p.retryDelay = time.Millisecond
+	listen := freePort(t)
+	go p.keepOpen(func(ctx context.Context) bool { return ctx.Err() == nil },
+		func() ([]control.PortForward, error) {
+			return []control.PortForward{{Direction: control.PortToVM, Listen: listen, Target: 3000}}, nil
+		})
+	hostAddr := fmt.Sprintf("127.0.0.1:%d", listen)
+	waitFor(t, "the persisted forward", func() bool { return roundTrip(t, hostAddr) == "guest: hi\n" })
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for range 100 {

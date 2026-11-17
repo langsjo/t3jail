@@ -29,6 +29,7 @@ import (
 	"github.com/langsjo/t3jail/internal/hostnets"
 	"github.com/langsjo/t3jail/internal/jailnet"
 	"github.com/langsjo/t3jail/internal/paths"
+	"github.com/langsjo/t3jail/internal/portfwd"
 	"github.com/langsjo/t3jail/internal/vmspec"
 	"github.com/langsjo/t3jail/internal/vsock"
 )
@@ -185,6 +186,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	go d.pollGuestReady(ctx)
+	if d.spec.Rescue == nil {
+		go d.ports.keepOpen(d.waitGuestSSH, func() ([]control.PortForward, error) {
+			p, err := portfwd.Load(d.inst.PortsFile())
+			return p.Forwards, err
+		})
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
@@ -449,25 +456,31 @@ func (d *Daemon) waitVM(timeout time.Duration) bool {
 
 // pollGuestReady marks the guest ready once its SSH server sends a banner.
 func (d *Daemon) pollGuestReady(ctx context.Context) {
-	for {
-		if guestSSHAnswers(ctx, d.inst.VsockSocket(), d.abi.VsockSSHPort) {
-			d.mu.Lock()
-			d.guestReady = true
-			if d.state == control.StateBooting {
-				d.state = control.StateRunning
-			}
-			d.mu.Unlock()
-			d.log.Info("guest is ready")
-			return
-		}
+	if !d.waitGuestSSH(ctx) {
+		return
+	}
+	d.mu.Lock()
+	d.guestReady = true
+	if d.state == control.StateBooting {
+		d.state = control.StateRunning
+	}
+	d.mu.Unlock()
+	d.log.Info("guest is ready")
+}
+
+// waitGuestSSH waits until the guest's SSH server sends a banner. It returns
+// false if the VM or the daemon stopped first.
+func (d *Daemon) waitGuestSSH(ctx context.Context) bool {
+	for !guestSSHAnswers(ctx, d.inst.VsockSocket(), d.abi.VsockSSHPort) {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-d.vmDone:
-			return
+			return false
 		case <-time.After(time.Second):
 		}
 	}
+	return true
 }
 
 func guestSSHAnswers(ctx context.Context, socket string, port uint32) bool {

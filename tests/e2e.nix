@@ -282,6 +282,7 @@ pkgs.testers.runNixOSTest {
         host.fail("curl -s -o /dev/null http://127.0.0.1:18080/")
         guest("! curl -s -o /dev/null http://127.0.0.1:18081/")
         assert "No ports are open" in t3jail("port list")
+        t3jail("port open --persist to 18082:3773")
 
     with subtest("mounts"):
         host.succeed("su - alice -c 'mkdir -p ~/proj ~/data && echo from-host > ~/data/f'")
@@ -310,13 +311,15 @@ pkgs.testers.runNixOSTest {
         after = int(guest(root_size))
         assert after > before + 1.5 * 1024**3, f"root filesystem {before} -> {after} bytes"
 
-    with subtest("restart keeps the disk and persisted mounts"):
+    with subtest("restart keeps the disk, persisted mounts and ports"):
         guest("echo kept > ~/state")
         t3jail("stop")
         t3jail("start -c 2 -m 2G")
         assert guest("cat ~/state").strip() == "kept"
         assert guest("cat /data/f").strip() == "from-host"
         guest("! test -e /work/new")
+        host.wait_until_succeeds("curl -s -o /dev/null http://127.0.0.1:18082/", timeout=60)
+        t3jail("port close to 18082")
 
     with subtest("config pull and push"):
         t3jail("config pull")

@@ -3,6 +3,7 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -45,44 +46,47 @@ type portForwards struct {
 	ctx  context.Context // ends all forwards
 	dial func(context.Context) (guestConn, error)
 	log  *slog.Logger
+	// lost is signaled when a forward ends because its connection dropped.
+	lost chan struct{}
+	// retryDelay is how long keepOpen waits after the guest did not answer.
+	retryDelay time.Duration
 
 	mu   sync.Mutex
 	open map[portKey]*openPort
 }
 
+var (
+	errAlreadyOpen = errors.New("already open")
+	errNoGuest     = errors.New("connecting to the VM over SSH")
+)
+
 func newPortForwards(ctx context.Context, dial func(context.Context) (guestConn, error), log *slog.Logger) *portForwards {
-	return &portForwards{ctx: ctx, dial: dial, log: log, open: map[portKey]*openPort{}}
+	return &portForwards{
+		ctx: ctx, dial: dial, log: log,
+		lost:       make(chan struct{}, 1),
+		retryDelay: 2 * time.Second,
+		open:       map[portKey]*openPort{},
+	}
 }
 
 func (p *portForwards) Open(ctx context.Context, f control.PortForward) (control.PortForward, error) {
-	if f.Listen == 0 || f.Target == 0 {
-		return f, fmt.Errorf("port 0")
-	}
-	switch f.Direction {
-	case control.PortToVM:
-		if !f.Bind.IsValid() {
-			f.Bind = control.DefaultPortBind
-		}
-	case control.PortFromVM:
-		if f.Bind.IsValid() {
-			return f, fmt.Errorf("a bind address applies only to forwards to the VM")
-		}
-	default:
-		return f, fmt.Errorf("unknown direction %q", f.Direction)
+	f, err := f.Normalized()
+	if err != nil {
+		return f, err
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	key := portKey{f.Direction, f.Listen}
 	if old, ok := p.open[key]; ok {
-		return f, fmt.Errorf("%s is already open", old.PortForward)
+		return f, fmt.Errorf("%s is %w", old.PortForward, errAlreadyOpen)
 	}
 
 	conn, err := p.dial(ctx)
 	if err != nil {
-		return f, fmt.Errorf("connecting to the VM over SSH: %w", err)
+		return f, fmt.Errorf("%w: %w", errNoGuest, err)
 	}
-	l, dial, err := listenForward(conn, f)
+	l, dial, err := listenForward(ctx, conn, f)
 	if err != nil {
 		conn.Close()
 		return f, err
@@ -100,12 +104,21 @@ func (p *portForwards) Open(ctx context.Context, f control.PortForward) (control
 		l.Close()
 		conn.Close()
 		p.mu.Lock()
-		if p.open[key] == entry {
+		// Close removes the entry itself, so one still here was not closed
+		// on request.
+		lost := p.open[key] == entry
+		if lost {
 			delete(p.open, key)
 		}
 		p.mu.Unlock()
 		close(entry.done)
 		p.log.Info("closed port forward", "forward", f.String())
+		if lost {
+			select {
+			case p.lost <- struct{}{}:
+			default:
+			}
+		}
 	}()
 	p.log.Info("opened port forward", "forward", f.String())
 	return f, nil
@@ -113,10 +126,20 @@ func (p *portForwards) Open(ctx context.Context, f control.PortForward) (control
 
 // listenForward listens on f's listening side and returns how to reach its
 // target on the other side.
-func listenForward(conn guestConn, f control.PortForward) (net.Listener, func(context.Context) (net.Conn, error), error) {
+func listenForward(ctx context.Context, conn guestConn, f control.PortForward) (net.Listener, func(context.Context) (net.Conn, error), error) {
 	target := net.JoinHostPort("localhost", strconv.Itoa(int(f.Target)))
 	if f.Direction == control.PortToVM {
-		l, err := net.Listen("tcp", netip.AddrPortFrom(f.Bind, f.Listen).String())
+		addr := netip.AddrPortFrom(f.Bind, f.Listen)
+		var l net.Listener
+		var err error
+		if addr.Addr().IsUnspecified() {
+			// Go listens on both IPv4 and IPv6 for a wildcard "tcp" address.
+			l, err = net.Listen("tcp", addr.String())
+		} else {
+			// A persisted forward may bind an address the host gets only
+			// later, e.g. a Tailscale IP.
+			l, err = listenFreebind(ctx, addr)
+		}
 		return l, func(context.Context) (net.Conn, error) { return conn.Dial("tcp", target) }, err
 	}
 	// sshd binds "localhost" to both loopback addresses.
@@ -142,6 +165,47 @@ func (p *portForwards) Close(req control.ClosePortRequest) error {
 	entry.stop()
 	<-entry.done
 	return nil
+}
+
+// keepOpen opens the forwards load returns once waitGuest says the guest's
+// SSH server answers, and again whenever a forward dropped with its
+// connection, e.g. because the guest rebooted. It returns when p's context
+// ends or waitGuest gives up.
+func (p *portForwards) keepOpen(waitGuest func(context.Context) bool, load func() ([]control.PortForward, error)) {
+	for waitGuest(p.ctx) {
+		var retry <-chan time.Time
+		if !p.openAll(load) {
+			retry = time.After(p.retryDelay)
+		}
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.lost:
+		case <-retry:
+		}
+	}
+}
+
+// openAll opens the forwards load returns that are not open yet. It reports
+// false if the guest did not answer, so trying again later may succeed.
+func (p *portForwards) openAll(load func() ([]control.PortForward, error)) bool {
+	fwds, err := load()
+	if err != nil {
+		p.log.Warn("not opening persisted port forwards", "err", err)
+		return true
+	}
+	for _, f := range fwds {
+		_, err := p.Open(p.ctx, f)
+		switch {
+		case err == nil, errors.Is(err, errAlreadyOpen):
+		case errors.Is(err, errNoGuest):
+			p.log.Info("guest not answering, retrying persisted port forwards", "err", err)
+			return false
+		default:
+			p.log.Warn("could not open persisted port forward", "forward", f.String(), "err", err)
+		}
+	}
+	return true
 }
 
 func (p *portForwards) List() []control.PortForward {

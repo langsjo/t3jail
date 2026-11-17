@@ -105,15 +105,36 @@ const (
 // one side, Target (on localhost) on the other. A forward is identified by
 // Direction and Listen.
 type PortForward struct {
-	Direction PortDirection `json:"direction"`
+	Direction PortDirection `toml:"direction" json:"direction"`
 	// Bind is the host address a PortToVM forward listens on.
-	Bind   netip.Addr `json:"bind,omitzero"`
-	Listen uint16     `json:"listen"`
-	Target uint16     `json:"target"`
+	Bind   netip.Addr `toml:"bind,omitempty" json:"bind,omitzero"`
+	Listen uint16     `toml:"listen" json:"listen"`
+	Target uint16     `toml:"target" json:"target"`
 }
 
 // DefaultPortBind is where PortToVM forwards listen unless Bind says otherwise.
 var DefaultPortBind = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+
+// Normalized checks f and fills in the default bind address.
+func (f PortForward) Normalized() (PortForward, error) {
+	if f.Listen == 0 || f.Target == 0 {
+		return f, errors.New("port 0")
+	}
+	switch f.Direction {
+	case PortToVM:
+		if !f.Bind.IsValid() {
+			f.Bind = DefaultPortBind
+		}
+		f.Bind = f.Bind.Unmap()
+	case PortFromVM:
+		if f.Bind.IsValid() {
+			return f, errors.New("a bind address applies only to forwards to the VM")
+		}
+	default:
+		return f, fmt.Errorf("unknown direction %q", f.Direction)
+	}
+	return f, nil
+}
 
 func (f PortForward) String() string {
 	if f.Direction == PortFromVM {
