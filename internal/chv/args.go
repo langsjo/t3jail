@@ -26,6 +26,7 @@ type LaunchSpec struct {
 
 	CPUs     int
 	MaxCPUs  int
+	Nested   bool // expose VMX/SVM so the guest can run KVM
 	Memory   vmspec.Memory
 	Shares   []Share
 	TapFD    int // 0 means no network device
@@ -51,7 +52,7 @@ func Args(s LaunchSpec) ([]string, error) {
 	}
 	args := []string{
 		"--api-socket", "path=" + s.APISocket,
-		"--cpus", fmt.Sprintf("boot=%d,max=%d", s.CPUs, s.MaxCPUs),
+		"--cpus", cpusArg(s),
 		"--memory", memoryArg(s.Memory),
 		"--disk", kv("path", s.Disk, "image_type", "raw", "id", DiskID),
 		"--serial", "socket=" + s.SerialSocket,
@@ -71,6 +72,14 @@ func Args(s LaunchSpec) ([]string, error) {
 		args = append(args, "--fs", fsArg(sh))
 	}
 	return args, nil
+}
+
+func cpusArg(s LaunchSpec) string {
+	arg := kv("boot", strconv.Itoa(s.CPUs), "max", strconv.Itoa(s.MaxCPUs))
+	if s.Nested {
+		arg += ",nested=on"
+	}
+	return arg
 }
 
 func memoryArg(m vmspec.Memory) string {

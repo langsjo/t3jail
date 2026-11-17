@@ -94,6 +94,18 @@ func TestArgsNeedsExactlyOneBootMethod(t *testing.T) {
 	}
 }
 
+func TestArgsNested(t *testing.T) {
+	s := baseSpec()
+	s.Nested = true
+	args, err := Args(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argValue(t, args, "--cpus"); got != "boot=2,max=8,nested=on" {
+		t.Errorf("--cpus = %q", got)
+	}
+}
+
 // fakeCH serves the API on a Unix socket and records requests.
 func fakeCH(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()

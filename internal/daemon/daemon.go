@@ -37,6 +37,8 @@ import (
 // RunSpec is written by `t3jail start` and read by the daemon.
 type RunSpec struct {
 	Resources vmspec.Resources
+	// NestedVirt lets the guest use KVM itself.
+	NestedVirt bool
 	// Firmware boots the VM's disk; Rescue, if set, boots the rescue system
 	// instead.
 	Firmware string
@@ -238,6 +240,7 @@ func (d *Daemon) startVM() (*exec.Cmd, error) {
 		Disk:         d.inst.Disk(),
 		CPUs:         res.CPUs,
 		MaxCPUs:      res.MaxCPUs,
+		Nested:       d.spec.NestedVirt,
 		Memory:       res.SplitMemory(),
 		Shares:       d.bootShares(),
 	}

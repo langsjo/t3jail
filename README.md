@@ -134,6 +134,11 @@ the host's CPU count and RAM). Memory can shrink back to the part fixed at
 start, a quarter of the start size and at least 1G. Shrinking is best effort
 and can take minutes.
 
+`nested_virt = true` in config.toml gives the VM `/dev/kvm`, so agents can run
+their own VMs. The host's `kvm_intel` or `kvm_amd` module must have nested
+virtualization enabled (`nested=1`, the default on recent kernels); `start`
+checks this. It applies from the next start, and never to the rescue system.
+
 ### The VM's own configuration
 
 The VM is self-contained: its own `/nix/store`, bootloader and
@@ -229,7 +234,8 @@ host:
 6. **Escape bugs.** A bug in cloud-hypervisor or virtiofsd that lets the guest
    out gives code execution as your user. cloud-hypervisor runs with no
    capabilities in its own user and network namespace; virtiofsd runs in its
-   namespace sandbox.
+   namespace sandbox. With `nested_virt`, the host kernel's nested KVM code is
+   exposed to the guest too, and a bug there reaches the host kernel.
 
 The T3 port is reachable by other local users, and by anything that can reach
 the other addresses in `[t3] listen`; T3's pairing tokens protect it. All

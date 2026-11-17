@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,14 +81,16 @@ func newStartCmd() *cobra.Command {
 				return err
 			}
 			spec := daemon.RunSpec{
-				Resources: resources,
-				Firmware:  os.Getenv(envFirmware),
-				T3Listen:  listen,
+				Resources:  resources,
+				NestedVirt: cfg.NestedVirt,
+				Firmware:   os.Getenv(envFirmware),
+				T3Listen:   listen,
 
 				RequestReminder: time.Duration(cfg.Net.RequestReminderSecs) * time.Second,
 			}
 			if rescue {
 				spec.Resources = resources.ForRescue()
+				spec.NestedVirt = false
 				if spec.Rescue, err = buildRescue(inst); err != nil {
 					return err
 				}
@@ -218,6 +221,11 @@ func preflight(spec daemon.RunSpec) error {
 			return fmt.Errorf("%s not found in PATH", bin)
 		}
 	}
+	if spec.NestedVirt {
+		if err := checkHostNested("/sys/module"); err != nil {
+			return err
+		}
+	}
 	if spec.Rescue != nil {
 		return nil
 	}
@@ -228,6 +236,26 @@ func preflight(spec daemon.RunSpec) error {
 		return fmt.Errorf("firmware: %w", err)
 	}
 	return nil
+}
+
+// checkHostNested fails unless the loaded kvm_intel or kvm_amd module allows
+// nested guests; without it the VM would boot with no usable /dev/kvm.
+func checkHostNested(sysModule string) error {
+	for _, mod := range []string{"kvm_intel", "kvm_amd"} {
+		data, err := os.ReadFile(filepath.Join(sysModule, mod, "parameters", "nested"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		// kvm_intel reports Y/N, kvm_amd 1/0.
+		if v := strings.TrimSpace(string(data)); v == "Y" || v == "1" {
+			return nil
+		}
+		return fmt.Errorf("nested_virt is set but %s has nested virtualization off; enable it with the module option %s.nested=1 (NixOS: boot.extraModprobeConfig)", mod, mod)
+	}
+	return errors.New("nested_virt is set but neither kvm_intel nor kvm_amd is loaded")
 }
 
 func printLogTail(name, path string, lines int) {

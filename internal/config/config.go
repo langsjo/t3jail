@@ -22,6 +22,8 @@ type Config struct {
 	MaxMemory ByteSize `toml:"max_mem"`
 	// Size of the VM disk created by `t3jail init`.
 	DiskSize ByteSize `toml:"disk_size"`
+	// Let the guest run its own VMs through nested KVM.
+	NestedVirt bool `toml:"nested_virt"`
 
 	T3  T3Config  `toml:"t3"`
 	Net NetConfig `toml:"net"`
@@ -144,6 +146,11 @@ max_mem = "0"
 
 # Size of the VM disk created by `+"`t3jail init`"+`.
 disk_size = %q
+
+# Give the VM /dev/kvm so it can run its own VMs. Needs nested virtualization
+# enabled in the host's kvm_intel or kvm_amd module, and widens what the VM
+# can reach in the host kernel. Takes effect on the next start.
+nested_virt = false
 
 [t3]
 # The T3 server is forwarded to this port on the host.
