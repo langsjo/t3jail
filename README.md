@@ -44,7 +44,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `stop [--force]`, `status [--json]` | Shut it down; show its state and size. |
 | `ssh [-- cmd]`, `console` | Shell over SSH; serial console (Ctrl-] detaches). |
 | `logs [-f] [--log serial\|dns\|daemon]` | Logs. |
-| `net allow\|block\|remove\|unblock\|list\|log\|reload\|requests` | Network allowlist, see below. |
+| `net allow\|block\|remove\|unblock\|list\|log\|reload\|requests\|mode` | Network allowlist, see below. |
 | `mount add\|remove\|list` | Share host directories, see below. |
 | `port open\|close to\|from PORT[:PORT]...`, `port list` | Forward TCP ports into (`to`) or out of (`from`) the VM until closed or the VM stops; `open --persist` also opens them at every start. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
@@ -118,16 +118,27 @@ requests. Only names can be requested, not addresses, so a request never
 overrides the block of private and host networks. A request for a blocked
 name is answered `blocked` at once.
 
-To let the VM reach any internet destination for a while without editing the
-allowlist:
+The network mode says what is enforced, without editing the list:
 
-    t3jail net disable        # until the VM stops; -p to keep it off
-    t3jail net enable         # apply the allowlist again; -p to make it stick
+    t3jail net mode                 # show it
+    t3jail net mode blocklist       # until the VM stops
+    t3jail net mode -p open         # also after restarts
+    t3jail net mode -p allowlist    # the default
 
-While the allowlist is off, any name resolves and any port and protocol is
-forwarded, but this machine, your LAN and the other blocked ranges stay
-blocked unless an address entry allows them. Enabling it again cuts the
-connections that only the switched-off allowlist let through.
+- `allowlist`: only what entries allow; blocks win.
+- `blocklist`: any name that is not blocked, on every TCP and UDP port, but
+  only at the addresses the VM's DNS returned for it, so hard-coded
+  addresses and other resolvers (including DNS over HTTPS) find nothing
+  open. An address stays open for a day after its last lookup. This is a
+  guardrail rather than a wall: a name the VM controls, or a service like
+  nip.io, can still point at a blocked name's address. Address blocks are
+  enforced either way.
+- `open`: any internet destination on any port and protocol; neither allows
+  nor blocks apply.
+
+In every mode this machine, your LAN and the other blocked ranges stay
+blocked unless an address entry allows them. Leaving open mode cuts the
+connections the new mode does not allow.
 
 ### Shared directories
 

@@ -342,8 +342,8 @@ func newStatusCmd() *cobra.Command {
 			if len(st.T3Listen) > 1 || len(absentListenAddrs(st.T3Listen)) > 0 {
 				fmt.Printf("listen:  %s\n", describeListen(st.T3Listen))
 			}
-			if state, err := filterState(inst, true); err == nil && describeFilterState(state) != "" {
-				fmt.Printf("network: %s\n", describeFilterState(state))
+			if state, err := modeState(inst, true); err == nil && describeMode(state) != "" {
+				fmt.Printf("network: %s\n", describeMode(state))
 			}
 			fmt.Printf("uptime:  %s\n", time.Since(st.Started).Round(time.Second))
 			return nil

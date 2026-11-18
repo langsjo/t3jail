@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/langsjo/t3jail/internal/netrules"
 )
 
 const (
@@ -125,8 +127,14 @@ func (i Instance) FSSocket(tag string) string {
 	return filepath.Join(i.Runtime, "fs-"+tag+".sock")
 }
 
-// NetworkOffMarker exists while the allowlist is switched off persistently.
-func (i Instance) NetworkOffMarker() string { return filepath.Join(i.Config, "network.off") }
+// NetworkModeOverride holds the network mode set until the VM stops.
+func (i Instance) NetworkModeOverride() string { return filepath.Join(i.Runtime, "network.mode") }
 
-// NetworkFilterOverride switches the allowlist on or off until the VM stops.
-func (i Instance) NetworkFilterOverride() string { return filepath.Join(i.Runtime, "network.filter") }
+// NetworkMode returns the files that keep the network mode.
+func (i Instance) NetworkMode() netrules.ModeFiles {
+	return netrules.ModeFiles{
+		Saved:     filepath.Join(i.Config, "network.mode"),
+		Override:  i.NetworkModeOverride(),
+		LegacyOff: filepath.Join(i.Config, "network.off"),
+	}
+}

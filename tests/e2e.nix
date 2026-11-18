@@ -245,10 +245,10 @@ pkgs.testers.runNixOSTest {
         assert not reaches("http://[${ip.other6}]")
         assert not reaches("http://[2001:db8:1::2]")
 
-    with subtest("switching the allowlist off and on"):
+    with subtest("open mode and back"):
         listed = t3jail("net list")
-        t3jail("net disable")
-        assert "allowlist off" in t3jail("status")
+        t3jail("net mode open")
+        assert "open mode" in t3jail("status")
         guest("getent hosts other.test")
         assert reaches("http://other.test")
         assert reaches("http://${ip.other}:8080")
@@ -258,19 +258,36 @@ pkgs.testers.runNixOSTest {
         assert reaches("http://${lanIP}")
         t3jail("net remove ${lanIP}/32")
 
-        t3jail("net enable")
+        t3jail("net mode allowlist")
         guest("! getent hosts other.test")
         assert not reaches("http://${ip.other}:8080")
         assert reaches("http://allowed.test")
         assert t3jail("net list") == listed
 
-        t3jail("net disable -p")
+        t3jail("net mode -p open")
         t3jail("stop")
         t3jail("start -c 2 -m 2G")
         assert reaches("http://other.test")
-        t3jail("net enable -p")
+        t3jail("net mode -p allowlist")
         assert not reaches("http://other.test")
         assert t3jail("net list") == listed
+
+    with subtest("blocklist mode opens only resolved, unblocked names"):
+        t3jail("net mode blocklist")
+        assert t3jail("net mode").startswith("blocklist")
+        # Not looked up through the VM's DNS yet, so not open.
+        assert not reaches("http://${ip.other}:8080")
+        # `getent hosts` would stop at the AAAA answer.
+        guest("getent ahostsv4 other.test")
+        assert reaches("http://${ip.other}:8080")
+        assert reaches("http://other.test")
+        t3jail("net block other.test")
+        guest("! getent hosts other.test")
+        assert not reaches("http://${ip.other}:8080")
+        t3jail("net unblock other.test")
+        assert not reaches("http://${lanIP}")
+        t3jail("net mode allowlist")
+        assert not reaches("http://${ip.other}:8080")
 
     with subtest("network requests from the guest"):
         guest("! t3jail-request 192.168.1.1")

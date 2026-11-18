@@ -19,6 +19,7 @@ import (
 
 	"github.com/langsjo/t3jail/internal/chv"
 	"github.com/langsjo/t3jail/internal/guestabi"
+	"github.com/langsjo/t3jail/internal/netrules"
 )
 
 const (
@@ -41,10 +42,8 @@ type HelperSpec struct {
 	// EphemeralNetworkList holds entries allowed until the VM stops. It may
 	// not exist.
 	EphemeralNetworkList string
-	// Files that switch the allowlist off; see netrules.LoadFilterState.
-	NetworkOffMarker      string
-	NetworkFilterOverride string
-	DNSLog                string
+	NetworkMode          netrules.ModeFiles
+	DNSLog               string
 	// APISocket is where the helper serves the API the daemon uses to
 	// change the filter while the VM runs.
 	APISocket string

@@ -47,8 +47,8 @@ table inet t3jail {
 		iifname "{{.Tap}}" goto refuse
 	}
 
-	# Empty while the allowlist applies; `t3jail net disable` adds an accept
-	# rule, letting through anything not blocked above.
+	# Empty unless the network is in open mode, which adds an accept rule,
+	# letting through anything not blocked above.
 	chain unfiltered {
 	}
 

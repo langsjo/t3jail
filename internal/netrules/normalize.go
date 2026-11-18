@@ -18,11 +18,19 @@ func Normalize(dests []Destination) []Destination {
 		byPrefix[p] = mergeRanges(slices.Clone(ports))
 	}
 
+	// Most destinations are single addresses from DNS answers, so only the
+	// few wider prefixes need checking as containers.
+	var outers []netip.Prefix
+	for p := range byPrefix {
+		if !p.IsSingleIP() {
+			outers = append(outers, p)
+		}
+	}
 	var out []Destination
 	for p, ports := range byPrefix {
-		for outer, outerPorts := range byPrefix {
+		for _, outer := range outers {
 			if outer.Bits() < p.Bits() && outer.Contains(p.Addr()) {
-				ports = subtractRanges(ports, outerPorts)
+				ports = subtractRanges(ports, byPrefix[outer])
 			}
 		}
 		for _, r := range ports {

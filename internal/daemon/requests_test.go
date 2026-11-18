@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/langsjo/t3jail/internal/control"
+	"github.com/langsjo/t3jail/internal/netrules"
 	"github.com/langsjo/t3jail/internal/paths"
 )
 
@@ -160,7 +161,7 @@ func TestToNotify(t *testing.T) {
 
 func TestHandleRequest(t *testing.T) {
 	dir := t.TempDir()
-	d := &Daemon{log: slog.New(slog.DiscardHandler), inst: paths.Instance{Config: dir, Runtime: dir}}
+	d := &Daemon{log: slog.New(slog.DiscardHandler), inst: paths.Instance{Config: dir, Runtime: t.TempDir()}}
 	ctx := context.Background()
 
 	ask := func(line string) *bufio.Reader {
@@ -197,8 +198,20 @@ func TestHandleRequest(t *testing.T) {
 	if got := readLine(ask("pkg.example.org\n")); got != control.AnswerAlreadyAllowed+"\n" {
 		t.Errorf("allowed name: %q", got)
 	}
-	os.WriteFile(d.inst.NetworkOffMarker(), nil, 0o600)
-	if got := readLine(ask("other.example\n")); got != control.AnswerAllowlistOff+"\n" {
-		t.Errorf("allowlist off: %q", got)
+	os.WriteFile(d.inst.NetworkList(), []byte("*.example.org\n!ads.example.org\n"), 0o600)
+	if got := readLine(ask("ads.example.org\n")); got != control.AnswerBlocked+"\n" {
+		t.Errorf("blocked name: %q", got)
+	}
+	modes := d.inst.NetworkMode()
+	modes.Set(netrules.Blocklist, false)
+	if got := readLine(ask("other.example\n")); got != control.AnswerNotBlocked+"\n" {
+		t.Errorf("blocklist mode: %q", got)
+	}
+	if got := readLine(ask("ads.example.org\n")); got != control.AnswerBlocked+"\n" {
+		t.Errorf("blocked name in blocklist mode: %q", got)
+	}
+	modes.Set(netrules.Open, true)
+	if got := readLine(ask("ads.example.org\n")); got != control.AnswerOpen+"\n" {
+		t.Errorf("open mode: %q", got)
 	}
 }

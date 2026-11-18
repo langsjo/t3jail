@@ -46,11 +46,12 @@ over any entry that allows the same name or address:
 Changes apply immediately to a running VM. Already resolved addresses stay
 allowed until the entry that caused them is removed or the VM restarts.
 
-` + "`t3jail net disable`" + ` lets the VM reach any internet destination for a while
-without changing the allowlist; ` + "`t3jail net enable`" + ` applies it again.`,
+` + "`t3jail net mode`" + ` switches what is enforced: only what the list allows
+(allowlist, the default), any name that is not blocked (blocklist), or
+anything (open).`,
 	}
 	cmd.AddCommand(newNetAllowCmd(), newNetBlockCmd(), newNetRemoveCmd(), newNetUnblockCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(), newNetRequestsCmd(),
-		newNetSwitchCmd(true), newNetSwitchCmd(false))
+		newNetModeCmd())
 	return cmd
 }
 
@@ -307,11 +308,11 @@ func newNetListCmd() *cobra.Command {
 			// discarded at the next start, so it does not apply now.
 			_, statusErr := control.NewClient(inst.ControlSocket()).Status(cmd.Context())
 			running := !errors.Is(statusErr, control.ErrNotRunning)
-			state, err := filterState(inst, running)
+			state, err := modeState(inst, running)
 			if err != nil {
 				return err
 			}
-			if line := describeFilterState(state); line != "" {
+			if line := describeMode(state); line != "" {
 				fmt.Printf("# %s\n", line)
 			}
 			return withNetworkLists(inst, func(lists networkLists) error {

@@ -83,7 +83,8 @@ const (
 	AnswerBlocked     = "blocked"
 	// These start with "allowed": t3jail-request matches on that prefix.
 	AnswerAlreadyAllowed = "allowed already"
-	AnswerAllowlistOff   = "allowed: the allowlist is off"
+	AnswerNotBlocked     = "allowed: the network is in blocklist mode"
+	AnswerOpen           = "allowed: the network is open"
 )
 
 // AnswerNetRequestsRequest answers pending requests, by entry. Entries

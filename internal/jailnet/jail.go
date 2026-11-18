@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/ti-mo/conntrack"
@@ -30,14 +31,14 @@ type Jail struct {
 	filter        *dnsfilter.Filter
 	listPath      string
 	ephemeralPath string
-	markerPath    string
-	overridePath  string
+	modeFiles     netrules.ModeFiles
 	guest         []netip.Addr
 	gateways      []netip.Addr
 
 	mu           sync.Mutex
 	prefixAllows []netrules.Destination
-	filterOff    bool
+	// mode is what the firewall enforces; it starts closed, as allowlist.
+	mode netrules.Mode
 }
 
 // HostNetsRequest replaces the set of host networks the guest may not reach.
@@ -50,10 +51,10 @@ func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
 		fw:            NewFirewall(),
 		listPath:      spec.NetworkList,
 		ephemeralPath: spec.EphemeralNetworkList,
-		markerPath:    spec.NetworkOffMarker,
-		overridePath:  spec.NetworkFilterOverride,
+		modeFiles:     spec.NetworkMode,
 		guest:         []netip.Addr{abi.Guest4, abi.Guest6},
 		gateways:      []netip.Addr{abi.Gateway4, abi.Gateway6},
+		mode:          netrules.Allowlist,
 	}
 	if err := j.fw.Init(abi); err != nil {
 		return nil, err
@@ -65,9 +66,6 @@ func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := j.setAddressRules(list); err != nil {
-		return nil, err
-	}
 
 	logFile, err := os.OpenFile(spec.DNSLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
@@ -75,9 +73,10 @@ func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
 	}
 	upstream := net.JoinHostPort(DNSForward, "53")
 	j.filter = dnsfilter.New(list, upstream, dnsGrants{j.fw}, haveIPv6Route, logFile)
-	if err := j.applyFilterState(); err != nil {
+	if _, err := j.Reload(context.Background(), control.Empty{}); err != nil {
 		return nil, err
 	}
+	go j.expireGrants()
 
 	for _, addr := range []netip.Addr{abi.Gateway4, abi.Gateway6} {
 		if err := serveDNS(netip.AddrPortFrom(addr, 53), j.filter); err != nil {
@@ -122,58 +121,64 @@ func readListFile(path string) (*netrules.List, error) {
 	return list, nil
 }
 
-// Reload applies the current allowlists. A list that does not parse changes
-// nothing; if applying fails partway, the error says which part.
+// Reload applies the current lists and mode. A list that does not parse
+// changes nothing; if applying fails partway, the error says which part.
 func (j *Jail) Reload(context.Context, control.Empty) (control.Empty, error) {
 	list, err := j.readList()
 	if err != nil {
 		return control.Empty{}, err
 	}
-	if err := j.setAddressRules(list); err != nil {
+	state, err := j.modeFiles.Load()
+	if err != nil {
+		return control.Empty{}, err
+	}
+	mode := state.Mode
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	// Names resolve only while the firewall lets their addresses through,
+	// so the firewall opens first and closes last.
+	if mode == netrules.Open && j.mode != netrules.Open {
+		if err := j.fw.SetUnfiltered(true); err != nil {
+			return control.Empty{}, fmt.Errorf("opening the firewall: %w", err)
+		}
+		j.mode = mode
+	}
+	if err := j.setAddressRules(list, mode); err != nil {
 		return control.Empty{}, fmt.Errorf("address entries: %w", err)
 	}
 	if err := j.filter.SetList(list); err != nil {
 		return control.Empty{}, fmt.Errorf("name entries: %w", err)
 	}
-	if err := j.applyFilterState(); err != nil {
-		return control.Empty{}, fmt.Errorf("switching the allowlist: %w", err)
+	if err := j.filter.SetMode(mode); err != nil {
+		return control.Empty{}, fmt.Errorf("switching to %s mode: %w", mode, err)
 	}
-	return control.Empty{}, nil
-}
-
-// applyFilterState switches the allowlist off or on as its state files say.
-func (j *Jail) applyFilterState() error {
-	state, err := netrules.LoadFilterState(j.markerPath, j.overridePath)
-	if err != nil {
-		return err
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if state.Off == j.filterOff {
-		return nil
-	}
-	// Names resolve only while the firewall lets their addresses through.
-	if state.Off {
-		if err := j.fw.SetUnfiltered(true); err != nil {
-			return err
-		}
-		j.filter.SetOpen(true)
-	} else {
-		j.filter.SetOpen(false)
+	if mode != netrules.Open && j.mode == netrules.Open {
 		if err := j.fw.SetUnfiltered(false); err != nil {
-			return err
+			return control.Empty{}, fmt.Errorf("closing the firewall: %w", err)
 		}
 		cutUnallowed(j.guest, j.gateways, append(slices.Clone(j.prefixAllows), j.filter.Granted()...))
 	}
-	j.filterOff = state.Off
-	return nil
+	j.mode = mode
+	return control.Empty{}, nil
 }
 
-// setAddressRules applies the list's address blocks and allows.
-func (j *Jail) setAddressRules(list *netrules.List) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	blocks := list.BlockedPrefixes()
+// expireGrants runs the DNS filter's expiry for the life of the helper.
+func (j *Jail) expireGrants() {
+	for range time.Tick(10 * time.Minute) {
+		if err := j.filter.Expire(); err != nil {
+			fmt.Fprintf(os.Stderr, "t3jail: expiring DNS grants: %v\n", err)
+		}
+	}
+}
+
+// setAddressRules applies the list's address blocks and allows. Open mode
+// ignores blocks. Must hold j.mu.
+func (j *Jail) setAddressRules(list *netrules.List, mode netrules.Mode) error {
+	var blocks []netip.Prefix
+	if mode != netrules.Open {
+		blocks = list.BlockedPrefixes()
+	}
 	if err := j.fw.SetBlocks(blocks); err != nil {
 		return err
 	}

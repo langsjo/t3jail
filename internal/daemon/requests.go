@@ -7,7 +7,7 @@ package daemon
 // Protocol, lines both ways: the guest sends "ENTRY\tREASON\n"; the daemon
 // replies "pending\n" (or "error: ...\n" and closes), then, once the user
 // decides, one of the control.Answer* values and closes. If the entry is
-// blocked, already allowed, or the allowlist is off, it answers at once
+// blocked, already allowed, or the mode allows it anyway, it answers at once
 // instead.
 // Everything the guest sends is untrusted.
 
@@ -160,10 +160,17 @@ func parseRequest(line string) (control.NetRequest, error) {
 // answerNow returns the answer for an entry that needs no decision, or "".
 func (d *Daemon) answerNow(entry string) string {
 	// The daemon's own VM is running, so the override applies.
-	if state, err := netrules.LoadFilterState(d.inst.NetworkOffMarker(), d.inst.NetworkFilterOverride()); err == nil && state.Off {
-		return control.AnswerAllowlistOff
+	state, err := d.inst.NetworkMode().Load()
+	if err == nil && state.Mode == netrules.Open {
+		return control.AnswerOpen
 	}
-	return answerFromLists(readLists(d.inst.NetworkList(), d.inst.EphemeralNetworkList()), entry)
+	if a := answerFromLists(readLists(d.inst.NetworkList(), d.inst.EphemeralNetworkList()), entry); a != "" {
+		return a
+	}
+	if err == nil && state.Mode == netrules.Blocklist {
+		return control.AnswerNotBlocked
+	}
+	return ""
 }
 
 // answerFromLists answers a request the lists decide: blocked (also when

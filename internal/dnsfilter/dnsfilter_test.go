@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 
@@ -407,25 +409,108 @@ func TestFailedUpdateKeepsBookkeepingInSyncWithTheFirewall(t *testing.T) {
 	h.wantGrants("198.51.100.2:22")
 }
 
-func TestOpenFilterAnswersEveryNameButGrantsOnlyListedOnes(t *testing.T) {
-	h := newHarness(t, "github.com\n", zone{
+func (h *harness) setMode(m netrules.Mode) {
+	h.t.Helper()
+	if err := h.filter.SetMode(m); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestOpenModeAnswersEveryNameButGrantsOnlyListedOnes(t *testing.T) {
+	h := newHarness(t, "github.com\n!ads.example\n", zone{
 		"A example.com.": {"example.com. 60 IN A 93.184.215.14"},
 		"A github.com.":  {"github.com. 60 IN A 140.82.121.4"},
+		"A ads.example.": {"ads.example. 60 IN A 192.0.2.66"},
 	})
-	h.filter.SetOpen(true)
-	if resp := h.query("example.com", dns.TypeA); resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 1 {
-		t.Fatalf("open filter: example.com answered %v", resp)
+	h.setMode(netrules.Open)
+	for _, name := range []string{"example.com", "ads.example"} {
+		if resp := h.query(name, dns.TypeA); resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 1 {
+			t.Fatalf("open mode: %s answered %v", name, resp)
+		}
 	}
 	// The firewall lets everything through while open; grants are kept for
-	// listed names so they still work once the filter is on again.
+	// listed names so they still work once the mode changes.
 	h.query("github.com", dns.TypeA)
 	h.wantGrants("140.82.121.4:80", "140.82.121.4:443")
 	if !strings.Contains(h.log.String(), "unfiltered\tA\texample.com") {
 		t.Errorf("log: %q", h.log.String())
 	}
 
-	h.filter.SetOpen(false)
+	h.setMode(netrules.Allowlist)
 	if resp := h.query("example.com", dns.TypeA); resp.Rcode != dns.RcodeRefused {
-		t.Errorf("filter on again: rcode %s", dns.RcodeToString[resp.Rcode])
+		t.Errorf("allowlist again: rcode %s", dns.RcodeToString[resp.Rcode])
+	}
+	h.wantGrants("140.82.121.4:80", "140.82.121.4:443")
+}
+
+func TestBlocklistModeGrantsEveryPortOfUnblockedNames(t *testing.T) {
+	h := newHarness(t, "github.com:22\n!ads.example\n", zone{
+		"A example.com.": {"example.com. 60 IN A 93.184.215.14"},
+		"A github.com.":  {"github.com. 60 IN A 140.82.121.4"},
+		"A ads.example.": {"ads.example. 60 IN A 192.0.2.66"},
+	})
+	h.setMode(netrules.Blocklist)
+	h.query("example.com", dns.TypeA)
+	h.query("github.com", dns.TypeA)
+	if resp := h.query("ads.example", dns.TypeA); resp.Rcode != dns.RcodeRefused {
+		t.Errorf("blocked name: rcode %s", dns.RcodeToString[resp.Rcode])
+	}
+	h.wantGrants("93.184.215.14:1-65535", "93.184.215.14:1-65535/udp", "140.82.121.4:1-65535", "140.82.121.4:1-65535/udp")
+
+	// Back in allowlist mode only listed names keep their listed ports.
+	h.setMode(netrules.Allowlist)
+	h.wantGrants("140.82.121.4:22")
+	h.setMode(netrules.Blocklist)
+	h.wantGrants("140.82.121.4:1-65535", "140.82.121.4:1-65535/udp")
+}
+
+func TestBlocklistGrantsExpireWithoutLookups(t *testing.T) {
+	h := newHarness(t, "", zone{
+		"A a.example.": {"a.example. 60 IN A 198.51.100.1"},
+		"A b.example.": {"b.example. 60 IN A 198.51.100.2"},
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.filter.mu.Lock()
+	h.filter.now = func() time.Time { return now }
+	h.filter.mu.Unlock()
+	h.setMode(netrules.Blocklist)
+
+	h.query("a.example", dns.TypeA)
+	now = now.Add(blocklistTTL / 2)
+	h.query("b.example", dns.TypeA)
+	now = now.Add(blocklistTTL/2 + time.Second)
+	if err := h.filter.Expire(); err != nil {
+		t.Fatal(err)
+	}
+	h.wantGrants("198.51.100.2:1-65535", "198.51.100.2:1-65535/udp")
+}
+
+func TestOldestNamesAreForgottenBeyondTheLimit(t *testing.T) {
+	h := newHarness(t, "", zone{})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.filter.mu.Lock()
+	h.filter.now = func() time.Time {
+		now = now.Add(time.Second)
+		return now
+	}
+	h.filter.mu.Unlock()
+	h.setMode(netrules.Blocklist)
+	defer func(n int) { maxResolvedNames = n }(maxResolvedNames)
+	maxResolvedNames = 50
+	for i := range maxResolvedNames + 1 {
+		addr := netip.AddrFrom4([4]byte{198, 51, byte(i >> 8), byte(i)})
+		if err := h.filter.grant(fmt.Sprintf("n%d.example", i), []netip.Addr{addr}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.filter.mu.Lock()
+	_, first := h.filter.resolved["n0.example"]
+	n := len(h.filter.resolved)
+	h.filter.mu.Unlock()
+	if first || n != maxResolvedNames*9/10 {
+		t.Errorf("kept %d names, first still there: %v", n, first)
+	}
+	if got := len(h.grants.list()); got != 2*n {
+		t.Errorf("%d grants for %d names", got, n)
 	}
 }

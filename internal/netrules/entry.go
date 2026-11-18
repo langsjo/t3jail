@@ -319,6 +319,14 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
+// MergePorts returns ranges sorted and merged, leaving ranges unchanged.
+func MergePorts(ranges []PortRange) []PortRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	return mergeRanges(slices.Clone(ranges))
+}
+
 // mergeRanges sorts ranges by protocol, then port, and merges overlapping
 // and adjacent ones of the same protocol.
 func mergeRanges(ranges []PortRange) []PortRange {
