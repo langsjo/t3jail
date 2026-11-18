@@ -246,10 +246,8 @@ func (g dnsGrants) Update(remove, add []netrules.Destination) error {
 	return nil
 }
 
-const protoTCP = 6
-
-// cutConnections ends established TCP connections that removed allowed and
-// kept does not, which the firewall's established rule would otherwise let
+// cutConnections ends established connections that removed allowed and kept
+// does not, which the firewall's established rule would otherwise let
 // continue. It runs after the firewall changed and is best effort: new
 // connections are already refused, a missed one only runs its course.
 func cutConnections(removed, kept []netrules.Destination) {
@@ -257,9 +255,8 @@ func cutConnections(removed, kept []netrules.Destination) {
 		return
 	}
 	err := cutFlows(func(f conntrack.Flow) bool {
-		addr, port := flowDestination(f)
-		return f.TupleOrig.Proto.Protocol == protoTCP &&
-			netrules.Covers(removed, addr, port) && !netrules.Covers(kept, addr, port)
+		addr, proto, port := flowDestination(f)
+		return netrules.Covers(removed, addr, proto, port) && !netrules.Covers(kept, addr, proto, port)
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "t3jail: ending connections to removed destinations: %v\n", err)
@@ -267,24 +264,24 @@ func cutConnections(removed, kept []netrules.Destination) {
 }
 
 // cutUnallowed ends the guest's connections that only the switched-off
-// allowlist let through: any protocol but TCP, and TCP to destinations not
-// in allowed. Best effort, like cutConnections.
+// allowlist let through: those to destinations not in allowed, which has
+// only TCP and UDP. Best effort, like cutConnections.
 func cutUnallowed(guest, gateways []netip.Addr, allowed []netrules.Destination) {
 	err := cutFlows(func(f conntrack.Flow) bool {
-		addr, port := flowDestination(f)
+		addr, proto, port := flowDestination(f)
 		src := f.TupleOrig.IP.SourceAddress.Unmap()
 		if !slices.Contains(guest, src) || slices.Contains(gateways, addr) {
 			return false
 		}
-		return f.TupleOrig.Proto.Protocol != protoTCP || !netrules.Covers(allowed, addr, port)
+		return !netrules.Covers(allowed, addr, proto, port)
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "t3jail: ending connections made while the allowlist was off: %v\n", err)
 	}
 }
 
-func flowDestination(f conntrack.Flow) (netip.Addr, uint16) {
-	return f.TupleOrig.IP.DestinationAddress.Unmap(), f.TupleOrig.Proto.DestinationPort
+func flowDestination(f conntrack.Flow) (netip.Addr, netrules.Proto, uint16) {
+	return f.TupleOrig.IP.DestinationAddress.Unmap(), netrules.Proto(f.TupleOrig.Proto.Protocol), f.TupleOrig.Proto.DestinationPort
 }
 
 func cutFlows(cut func(conntrack.Flow) bool) error {

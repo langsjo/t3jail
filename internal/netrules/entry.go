@@ -6,6 +6,7 @@
 //	*.github.com        github.com and all its subdomains
 //	github.com:22       exact name, only TCP 22
 //	host.example:80,8000-8100
+//	dns.example:53/udp  UDP ports end in /udp (/tcp is the default)
 //	203.0.113.0/24      addresses (also overrides the default private/host blocks)
 //	[2001:db8::/32]:443 IPv6 must be bracketed when ports follow
 package netrules
@@ -27,11 +28,37 @@ const (
 	KindPrefix               // IP address or CIDR
 )
 
-// PortRange is an inclusive range of TCP ports.
-type PortRange struct{ First, Last uint16 }
+// Proto is a transport protocol, by its IP protocol number.
+type Proto uint8
+
+const (
+	TCP Proto = 6
+	UDP Proto = 17
+)
+
+func (p Proto) String() string {
+	switch p {
+	case TCP:
+		return "tcp"
+	case UDP:
+		return "udp"
+	}
+	return strconv.Itoa(int(p))
+}
+
+// PortRange is an inclusive range of ports of one protocol.
+type PortRange struct {
+	Proto       Proto
+	First, Last uint16
+}
+
+// Contains reports whether r includes all of o.
+func (r PortRange) Contains(o PortRange) bool {
+	return r.Proto == o.Proto && r.First <= o.First && o.Last <= r.Last
+}
 
 // DefaultPorts apply to entries without an explicit port list.
-var DefaultPorts = []PortRange{{80, 80}, {443, 443}}
+var DefaultPorts = []PortRange{{TCP, 80, 80}, {TCP, 443, 443}}
 
 type Entry struct {
 	Kind Kind
@@ -82,7 +109,7 @@ func (e Entry) Covers(o Entry) bool {
 	}
 	// Port ranges are merged, so each of o's must lie within one of e's.
 	for _, r := range o.EffectivePorts() {
-		if !slices.ContainsFunc(e.EffectivePorts(), func(a PortRange) bool { return a.First <= r.First && r.Last <= a.Last }) {
+		if !slices.ContainsFunc(e.EffectivePorts(), func(a PortRange) bool { return a.Contains(r) }) {
 			return false
 		}
 	}
@@ -110,6 +137,9 @@ func (e Entry) String() string {
 		parts[i] = strconv.Itoa(int(r.First))
 		if r.Last != r.First {
 			parts[i] += "-" + strconv.Itoa(int(r.Last))
+		}
+		if r.Proto != TCP {
+			parts[i] += "/" + r.Proto.String()
 		}
 	}
 	return host + ":" + strings.Join(parts, ",")
@@ -226,13 +256,25 @@ func validateName(name string) error {
 	return nil
 }
 
-// parsePorts parses "22", "80,443" or "8000-8100", sorted and merged.
+// parsePorts parses "22", "80,443", "8000-8100" or "443,443/udp", sorted
+// and merged.
 func parsePorts(spec string) ([]PortRange, error) {
 	if spec == "" {
 		return nil, errors.New("empty port list")
 	}
 	var ranges []PortRange
 	for _, part := range strings.Split(spec, ",") {
+		proto := TCP
+		if nums, name, ok := strings.Cut(part, "/"); ok {
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "tcp":
+			case "udp":
+				proto = UDP
+			default:
+				return nil, fmt.Errorf("unknown protocol %q (want tcp or udp)", name)
+			}
+			part = nums
+		}
 		first, last, isRange := strings.Cut(part, "-")
 		a, err := parsePort(first)
 		if err != nil {
@@ -247,7 +289,7 @@ func parsePorts(spec string) ([]PortRange, error) {
 				return nil, fmt.Errorf("port range %q is reversed", part)
 			}
 		}
-		ranges = append(ranges, PortRange{a, b})
+		ranges = append(ranges, PortRange{proto, a, b})
 	}
 	return mergeRanges(ranges), nil
 }
@@ -260,16 +302,25 @@ func parsePort(s string) (uint16, error) {
 	return uint16(n), nil
 }
 
+// mergeRanges sorts ranges by protocol, then port, and merges overlapping
+// and adjacent ones of the same protocol.
 func mergeRanges(ranges []PortRange) []PortRange {
-	slices.SortFunc(ranges, func(a, b PortRange) int { return int(a.First) - int(b.First) })
+	slices.SortFunc(ranges, comparePorts)
 	merged := ranges[:1]
 	for _, r := range ranges[1:] {
 		last := &merged[len(merged)-1]
-		if uint32(r.First) <= uint32(last.Last)+1 {
+		if r.Proto == last.Proto && uint32(r.First) <= uint32(last.Last)+1 {
 			last.Last = max(last.Last, r.Last)
 		} else {
 			merged = append(merged, r)
 		}
 	}
 	return merged
+}
+
+func comparePorts(a, b PortRange) int {
+	if a.Proto != b.Proto {
+		return int(a.Proto) - int(b.Proto)
+	}
+	return int(a.First) - int(b.First)
 }

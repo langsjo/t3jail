@@ -56,14 +56,15 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 	// Replacing must drop the old host networks.
 	must(fw.SetHostNets([]netip.Prefix{netip.MustParsePrefix("93.184.0.0/16")}))
 	must(fw.SetPrefixAllows([]netrules.Destination{
-		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: netrules.PortRange{First: 22, Last: 22}},
-		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: netrules.PortRange{First: 8000, Last: 8100}},
+		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 22, Last: 22}},
+		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 8000, Last: 8100}},
+		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: netrules.PortRange{Proto: netrules.UDP, First: 53, Last: 53}},
 	}))
-	keep := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.4/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
-	gone := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.5/32"), Ports: netrules.PortRange{First: 443, Last: 443}}
-	v6 := netrules.Destination{Prefix: netip.MustParsePrefix("2606:50c0:8000::154/128"), Ports: netrules.PortRange{First: 22, Last: 22}}
-	narrow := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.6/32"), Ports: netrules.PortRange{First: 80, Last: 90}}
-	wide := netrules.Destination{Prefix: narrow.Prefix, Ports: netrules.PortRange{First: 80, Last: 95}}
+	keep := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.4/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 443, Last: 443}}
+	gone := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.5/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 443, Last: 443}}
+	v6 := netrules.Destination{Prefix: netip.MustParsePrefix("2606:50c0:8000::154/128"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 22, Last: 22}}
+	narrow := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.6/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 80, Last: 90}}
+	wide := netrules.Destination{Prefix: narrow.Prefix, Ports: netrules.PortRange{Proto: netrules.TCP, First: 80, Last: 95}}
 	must(fw.UpdateDNSAllows(nil, []netrules.Destination{keep, gone, v6, narrow}))
 	// Replacing an element with an overlapping wider one must work in one go.
 	must(fw.UpdateDNSAllows([]netrules.Destination{gone, narrow}, []netrules.Destination{wide}))
@@ -71,11 +72,12 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 	table := runInFreshNetns(t, *scripts)
 	for _, want := range []string{
 		"93.184.0.0/16",
-		"192.168.1.50 . 22",
-		"2001:db8::/32 . 8000-8100",
-		"140.82.121.4 . 443",
-		"2606:50c0:8000::154 . 22",
-		"140.82.121.6 . 80-95",
+		"192.168.1.50 . tcp . 22",
+		"192.168.1.50 . udp . 53",
+		"2001:db8::/32 . tcp . 8000-8100",
+		"140.82.121.4 . tcp . 443",
+		"2606:50c0:8000::154 . tcp . 22",
+		"140.82.121.6 . tcp . 80-95",
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("table lacks %q:\n%s", want, table)

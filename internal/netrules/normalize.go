@@ -40,35 +40,36 @@ func compareDestinations(a, b Destination) int {
 	if c := a.Prefix.Bits() - b.Prefix.Bits(); c != 0 {
 		return c
 	}
-	return int(a.Ports.First) - int(b.Ports.First)
+	return comparePorts(a.Ports, b.Ports)
 }
 
 // subtractRanges returns the ports in a that are not in b. Both are sorted
-// and non-overlapping.
+// (see mergeRanges) and non-overlapping.
 func subtractRanges(a, b []PortRange) []PortRange {
 	var out []PortRange
 	for _, r := range a {
 		first, last := uint32(r.First), uint32(r.Last)
 		for _, cut := range b {
-			if uint32(cut.Last) < first || uint32(cut.First) > last {
+			if cut.Proto != r.Proto || uint32(cut.Last) < first || uint32(cut.First) > last {
 				continue
 			}
 			if uint32(cut.First) > first {
-				out = append(out, PortRange{uint16(first), cut.First - 1})
+				out = append(out, PortRange{r.Proto, uint16(first), cut.First - 1})
 			}
 			first = uint32(cut.Last) + 1
 		}
 		if first <= last {
-			out = append(out, PortRange{uint16(first), uint16(last)})
+			out = append(out, PortRange{r.Proto, uint16(first), uint16(last)})
 		}
 	}
 	return out
 }
 
-// Covers reports whether some destination in dests allows addr:port.
-func Covers(dests []Destination, addr netip.Addr, port uint16) bool {
+// Covers reports whether some destination in dests allows addr:port over
+// proto.
+func Covers(dests []Destination, addr netip.Addr, proto Proto, port uint16) bool {
 	for _, d := range dests {
-		if d.Prefix.Contains(addr) && port >= d.Ports.First && port <= d.Ports.Last {
+		if d.Prefix.Contains(addr) && d.Ports.Proto == proto && port >= d.Ports.First && port <= d.Ports.Last {
 			return true
 		}
 	}

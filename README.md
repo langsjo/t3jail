@@ -76,13 +76,15 @@ immediately (DNS answers REFUSED, connections are reset). Initially allowed:
     t3jail net allow registry.npmjs.org      # until the VM stops
     t3jail net allow -p '*.pypi.org'         # permanently
     t3jail net allow -p github.com:22        # only port 22
+    t3jail net allow time.example:123/udp    # UDP
     t3jail net remove registry.npmjs.org
     t3jail net log -f                        # DNS queries and decisions
 
 Entries are `name` (exactly that name), `*.name` (the name and everything
 below it), addresses and networks (`192.0.2.7`, `198.51.100.0/24`,
 `[2001:db8::/32]`). Ports default to TCP 80 and 443; `:22`, `:80,443` or
-`:8000-8100` replace them. Only TCP is forwarded.
+`:8000-8100` replace them. Ports ending in `/udp` are UDP: `:53/udp`,
+`:443,443/udp` (HTTP/3 too).
 
 Names are enforced by address: when the VM resolves an allowed name, the
 answer's addresses are opened for that entry's ports. Changes apply

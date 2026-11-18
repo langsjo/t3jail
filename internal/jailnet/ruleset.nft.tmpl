@@ -13,11 +13,11 @@ table inet t3jail {
 	set hostnets4 { type ipv4_addr; flags interval; auto-merge; }
 	set hostnets6 { type ipv6_addr; flags interval; auto-merge; }
 	# Explicit address entries from network.list.
-	set cidr_allow4 { type ipv4_addr . inet_service; flags interval; }
-	set cidr_allow6 { type ipv6_addr . inet_service; flags interval; }
+	set cidr_allow4 { type ipv4_addr . inet_proto . inet_service; flags interval; }
+	set cidr_allow6 { type ipv6_addr . inet_proto . inet_service; flags interval; }
 	# Addresses the DNS filter resolved for allowed names.
-	set dns_allow4 { type ipv4_addr . inet_service; flags interval; }
-	set dns_allow6 { type ipv6_addr . inet_service; flags interval; }
+	set dns_allow4 { type ipv4_addr . inet_proto . inet_service; flags interval; }
+	set dns_allow6 { type ipv6_addr . inet_proto . inet_service; flags interval; }
 
 	chain input {
 		type filter hook input priority filter; policy accept;
@@ -30,15 +30,15 @@ table inet t3jail {
 	chain forward {
 		type filter hook forward priority filter; policy drop;
 		ct state established,related accept
-		iifname "{{.Tap}}" ip daddr . tcp dport @cidr_allow4 accept
-		iifname "{{.Tap}}" ip6 daddr . tcp dport @cidr_allow6 accept
+		iifname "{{.Tap}}" ip daddr . meta l4proto . th dport @cidr_allow4 accept
+		iifname "{{.Tap}}" ip6 daddr . meta l4proto . th dport @cidr_allow6 accept
 		iifname "{{.Tap}}" ip daddr @blocked4 goto refuse
 		iifname "{{.Tap}}" ip6 daddr @blocked6 goto refuse
 		iifname "{{.Tap}}" ip daddr @hostnets4 goto refuse
 		iifname "{{.Tap}}" ip6 daddr @hostnets6 goto refuse
 		iifname "{{.Tap}}" jump unfiltered
-		iifname "{{.Tap}}" ip daddr . tcp dport @dns_allow4 accept
-		iifname "{{.Tap}}" ip6 daddr . tcp dport @dns_allow6 accept
+		iifname "{{.Tap}}" ip daddr . meta l4proto . th dport @dns_allow4 accept
+		iifname "{{.Tap}}" ip6 daddr . meta l4proto . th dport @dns_allow6 accept
 		iifname "{{.Tap}}" goto refuse
 	}
 

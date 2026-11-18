@@ -14,6 +14,10 @@ func TestParseCanonical(t *testing.T) {
 		"github.com:22":          "github.com:22",
 		"host.example:443,80":    "host.example:80,443",
 		"h:8000-8100,8050,8101":  "h:8000-8101",
+		"h:53/UDP,443,443/udp":   "h:443,53/udp,443/udp",
+		"h:80/tcp":               "h:80",
+		"h:1-10/udp,11-20/udp,5": "h:5,1-20/udp",
+		"[2001:db8::1]:53/udp":   "[2001:db8::1]:53/udp",
 		"203.0.113.7":            "203.0.113.7",
 		"203.0.113.0/24:22":      "203.0.113.0/24:22",
 		"2001:db8::1":            "2001:db8::1",
@@ -42,6 +46,7 @@ func TestParseRejects(t *testing.T) {
 	for _, bad := range []string{
 		"", "*", "*.", "a..b", "-a.com", "a-.com", "ex ample.com", "foo*.com", "a.*.com",
 		"github.com:", "github.com:0", "github.com:70000", "github.com:443-80", "github.com:x",
+		"github.com:53/icmp", "github.com:/udp", "github.com:53/",
 		"203.0.113.7/24",   // host bits set
 		"[2001:db8::1:443", // missing ]
 		"[2001:db8::1]443", // missing :
@@ -85,11 +90,11 @@ func TestPortsForNameUnionsMatchingEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	ports, ok := l.PortsForName("github.com")
-	if !ok || !slices.Equal(ports, []PortRange{{22, 22}, {80, 80}, {443, 443}}) {
+	if !ok || !slices.Equal(ports, []PortRange{{TCP, 22, 22}, {TCP, 80, 80}, {TCP, 443, 443}}) {
 		t.Errorf("github.com ports = %v, %v", ports, ok)
 	}
 	ports, ok = l.PortsForName("api.github.com")
-	if !ok || !slices.Equal(ports, []PortRange{{22, 22}}) {
+	if !ok || !slices.Equal(ports, []PortRange{{TCP, 22, 22}}) {
 		t.Errorf("api.github.com ports = %v, %v (exact ports only)", ports, ok)
 	}
 	if _, ok := l.PortsForName("example.com"); ok {
@@ -144,7 +149,7 @@ func TestPrefixes(t *testing.T) {
 	l, _ := ParseList([]byte("192.168.1.50:22\n[2001:db8::/32]\nexample.com\n"))
 	got := l.Prefixes()
 	want := []PrefixRule{
-		{netip.MustParsePrefix("192.168.1.50/32"), []PortRange{{22, 22}}},
+		{netip.MustParsePrefix("192.168.1.50/32"), []PortRange{{TCP, 22, 22}}},
 		{netip.MustParsePrefix("2001:db8::/32"), DefaultPorts},
 	}
 	if len(got) != 2 || got[0].Prefix != want[0].Prefix || !slices.Equal(got[0].Ports, want[0].Ports) || got[1].Prefix != want[1].Prefix || !slices.Equal(got[1].Ports, want[1].Ports) {
@@ -164,6 +169,8 @@ func TestCovers(t *testing.T) {
 		{"*.example.com", "*.api.example.com", true},
 		{"api.example.com", "*.api.example.com", false},
 		{"example.com:1-1000", "example.com:22,80", true},
+		{"example.com:1-1000", "example.com:53/udp", false},
+		{"example.com:443,443/udp", "example.com:443/udp", true},
 		{"other.com", "example.com", false},
 		{"192.0.2.1", "example.com", false},
 	} {

@@ -30,8 +30,9 @@ config directory). Entries:
                       link-local and host networks
   [2001:db8::/32]     IPv6 networks and addresses may be bracketed
 
-Each entry may end in :PORTS, e.g. :22, :80,443 or :8000-8100. Without it,
-TCP ports 80 and 443 are allowed. Only TCP is forwarded.
+Each entry may end in :PORTS, e.g. :22, :80,443 or :8000-8100. Ports are
+TCP unless they end in /udp, e.g. :53/udp or :443,443/udp (HTTP/3). Without
+:PORTS, TCP ports 80 and 443 are allowed.
 
 Changes apply immediately to a running VM. Already resolved addresses stay
 allowed until the entry that caused them is removed or the VM restarts.

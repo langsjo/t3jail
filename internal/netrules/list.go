@@ -140,8 +140,8 @@ func (l *List) Prefixes() []PrefixRule {
 	return out
 }
 
-// Destination is one allowed address range and port range, the unit the
-// firewall sets are built from.
+// Destination is one allowed address range and port range (of one
+// protocol), the unit the firewall sets are built from.
 type Destination struct {
 	Prefix netip.Prefix
 	Ports  PortRange

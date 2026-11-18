@@ -44,7 +44,7 @@ func (g *fakeGrants) Update(remove, add []netrules.Destination) error {
 	}
 	for _, d := range add {
 		for _, e := range g.elems {
-			if e.Prefix.Overlaps(d.Prefix) && e.Ports.First <= d.Ports.Last && d.Ports.First <= e.Ports.Last {
+			if e.Prefix.Overlaps(d.Prefix) && e.Ports.Proto == d.Ports.Proto && e.Ports.First <= d.Ports.Last && d.Ports.First <= e.Ports.Last {
 				panic(fmt.Sprintf("%s overlaps %s", key(d), key(e)))
 			}
 		}
@@ -69,6 +69,9 @@ func key(d netrules.Destination) string {
 	s := d.Prefix.Addr().String() + ":" + itoa(d.Ports.First)
 	if d.Ports.Last != d.Ports.First {
 		s += "-" + itoa(d.Ports.Last)
+	}
+	if d.Ports.Proto != netrules.TCP {
+		s += "/" + d.Ports.Proto.String()
 	}
 	return s
 }
@@ -221,6 +224,14 @@ func TestOnlyTheMatchingEntrysPortsAreGranted(t *testing.T) {
 	h.query("api.github.com", dns.TypeA)
 	h.query("github.com", dns.TypeA)
 	h.wantGrants("140.82.121.6:22", "140.82.121.4:22", "140.82.121.4:80", "140.82.121.4:443")
+}
+
+func TestUDPPortsAreGrantedSeparately(t *testing.T) {
+	h := newHarness(t, "svc.example:443,443/udp,3478-3480/udp\n", zone{
+		"A svc.example.": {"svc.example. 60 IN A 192.0.2.80"},
+	})
+	h.query("svc.example", dns.TypeA)
+	h.wantGrants("192.0.2.80:443", "192.0.2.80:443/udp", "192.0.2.80:3478-3480/udp")
 }
 
 func TestHTTPSHintsAreGranted(t *testing.T) {

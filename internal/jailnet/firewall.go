@@ -31,7 +31,7 @@ var (
 	}
 )
 
-// nftElement formats a destination as an `addr . ports` set element.
+// nftElement formats a destination as an `addr . proto . ports` set element.
 func nftElement(e netrules.Destination) string {
 	ports := fmt.Sprint(e.Ports.First)
 	if e.Ports.Last != e.Ports.First {
@@ -41,7 +41,7 @@ func nftElement(e netrules.Destination) string {
 	if e.Prefix.IsSingleIP() {
 		addr = e.Prefix.Addr().String()
 	}
-	return addr + " . " + ports
+	return addr + " . " + e.Ports.Proto.String() + " . " + ports
 }
 
 // Firewall applies nft scripts in the jail's network namespace.

@@ -23,7 +23,7 @@
   };
 
   # The clock follows the host through kvm-clock, so NTP is not needed (and
-  # the allowlist forwards no UDP).
+  # the default allowlist allows no UDP).
   services.timesyncd.enable = false;
 
   # Hotplugged vCPUs are not onlined by default.
