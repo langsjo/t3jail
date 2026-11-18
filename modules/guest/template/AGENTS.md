@@ -9,6 +9,10 @@ may change it.
   mounts. Do not remove it: the host loses access to the VM without it.
 - `platform.nix`: the VM's CPU architecture. Leave it alone.
 
+The guest reclaims cold page cache by default. In `configuration.nix`, set
+`t3jail.memoryReclaim.enable = false;` to disable it or change
+`t3jail.memoryReclaim.minAge` from its default of 120 seconds.
+
 Apply changes:
 
     sudo nixos-rebuild switch --flake /etc/nixos

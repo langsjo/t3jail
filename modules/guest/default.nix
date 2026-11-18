@@ -4,6 +4,7 @@
   imports = [
     ./base.nix
     ./disk.nix
+    ./memory.nix
     ./t3.nix
     ./nixos-config.nix
   ];

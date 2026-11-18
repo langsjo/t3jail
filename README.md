@@ -162,10 +162,12 @@ their own VMs. The host's `kvm_intel` or `kvm_amd` module must have nested
 virtualization enabled (`nested=1`, the default on recent kernels); `start`
 checks this. It applies from the next start, and never to the rescue system.
 
-Free page reporting returns unused guest RAM to the host while keeping it
-available for the VM to use again. It is enabled by default for normal and
-rescue boots. Set `free_page_reporting = false` in config.toml to disable it
-on the next start.
+The VM hands RAM it isn't using back to the host (free page reporting), and
+can take it again whenever it needs it. Linux fills spare RAM with page cache,
+so the guest also drops cache nobody has touched for two minutes
+(`t3jail.memoryReclaim` in the VM's configuration). Set
+`free_page_reporting = false` in config.toml to turn reporting off from the
+next start.
 
 ### The VM's own configuration
 
