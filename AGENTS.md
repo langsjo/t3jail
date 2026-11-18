@@ -38,6 +38,11 @@ VM as hostile: the agents in it have root there.
     nix fmt                              # nixfmt-tree for .nix files
     gofmt -l .
 
+The end-to-end NixOS test (`nix build .#checks.x86_64-linux.e2e`, in
+`tests/e2e.nix`) boots VMs and takes many minutes. Don't run it unless the
+user explicitly asks for it, or you ask first and they agree. When it does
+run, make it the last step, after everything else is finished.
+
 After changing Go dependencies, update `vendorHash` in `packages/t3jail.nix`
 (set it to `lib.fakeHash`, build, copy the hash from the error).
 
