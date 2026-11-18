@@ -301,18 +301,15 @@ pkgs.testers.runNixOSTest {
         t3jail("net remove other.test")
 
     with subtest("port forwards"):
-        # Host -> the T3 server, which listens only on the VM's localhost.
-        t3jail("port open to 18080:3773")
-        host.succeed("curl -s -o /dev/null http://127.0.0.1:18080/")
         # The VM -> the host's own nginx, which it cannot reach otherwise.
         t3jail("port open from 18081:80")
         guest("curl -s -o /dev/null http://127.0.0.1:18081/")
         assert "18081" in t3jail("port list")
-        t3jail("port close to 18080")
         t3jail("port close from 18081")
-        host.fail("curl -s -o /dev/null http://127.0.0.1:18080/")
         guest("! curl -s -o /dev/null http://127.0.0.1:18081/")
         assert "No ports are open" in t3jail("port list")
+        # Host -> the T3 server, which listens only on the VM's localhost.
+        # Checked after the restart below, which waits for T3 to come up.
         t3jail("port open --persist to 18082:3773")
 
     with subtest("mounts"):
