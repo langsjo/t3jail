@@ -163,3 +163,18 @@ func captureStdout(t *testing.T, fn func()) string {
 	data, _ := io.ReadAll(r)
 	return string(data)
 }
+
+func TestParseBlocksRejectsPorts(t *testing.T) {
+	if _, err := parseBlocks([]string{"x.example:443"}); err == nil {
+		t.Error("a block with ports parsed")
+	}
+	got, err := parseBlocks([]string{"ads.example", "!*.t.example", "10.9.0.0/16"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range got {
+		if !e.Block {
+			t.Errorf("%v is not a block", e)
+		}
+	}
+}

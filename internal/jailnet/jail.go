@@ -65,7 +65,7 @@ func startJail(abi guestabi.ABI, spec HelperSpec) (*Jail, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := j.setPrefixAllows(list); err != nil {
+	if err := j.setAddressRules(list); err != nil {
 		return nil, err
 	}
 
@@ -129,7 +129,7 @@ func (j *Jail) Reload(context.Context, control.Empty) (control.Empty, error) {
 	if err != nil {
 		return control.Empty{}, err
 	}
-	if err := j.setPrefixAllows(list); err != nil {
+	if err := j.setAddressRules(list); err != nil {
 		return control.Empty{}, fmt.Errorf("address entries: %w", err)
 	}
 	if err := j.filter.SetList(list); err != nil {
@@ -169,9 +169,16 @@ func (j *Jail) applyFilterState() error {
 	return nil
 }
 
-func (j *Jail) setPrefixAllows(list *netrules.List) error {
+// setAddressRules applies the list's address blocks and allows.
+func (j *Jail) setAddressRules(list *netrules.List) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	blocks := list.BlockedPrefixes()
+	if err := j.fw.SetBlocks(blocks); err != nil {
+		return err
+	}
+	cutBlocked(j.guest, blocks)
+
 	var dests []netrules.Destination
 	for _, r := range list.Prefixes() {
 		dests = append(dests, r.Destinations()...)
@@ -277,6 +284,22 @@ func cutUnallowed(guest, gateways []netip.Addr, allowed []netrules.Destination) 
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "t3jail: ending connections made while the allowlist was off: %v\n", err)
+	}
+}
+
+// cutBlocked ends the guest's connections into blocked prefixes. Best effort,
+// like cutConnections.
+func cutBlocked(guest []netip.Addr, blocks []netip.Prefix) {
+	if len(blocks) == 0 {
+		return
+	}
+	err := cutFlows(func(f conntrack.Flow) bool {
+		addr, _, _ := flowDestination(f)
+		return slices.Contains(guest, f.TupleOrig.IP.SourceAddress.Unmap()) &&
+			slices.ContainsFunc(blocks, func(p netip.Prefix) bool { return p.Contains(addr) })
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "t3jail: ending connections to blocked addresses: %v\n", err)
 	}
 }
 

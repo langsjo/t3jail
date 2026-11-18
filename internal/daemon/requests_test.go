@@ -28,6 +28,7 @@ func TestParseRequest(t *testing.T) {
 		{line: "*.github.io\n", err: "too broad"},
 		{line: "*.example.co.uk\n", entry: "*.example.co.uk"},
 		{line: "not a name!\n", err: "invalid"},
+		{line: "!ads.example\n", err: "only allowing"},
 	} {
 		r, err := parseRequest(tc.line)
 		if tc.err != "" {
@@ -46,20 +47,27 @@ func TestParseRequest(t *testing.T) {
 	}
 }
 
-func TestListsCover(t *testing.T) {
+func TestAnswerFromLists(t *testing.T) {
 	dir := t.TempDir()
 	perm := filepath.Join(dir, "network.list")
-	os.WriteFile(perm, []byte("*.example.org\napi.example.com:8443\n"), 0o600)
-	files := []string{perm, filepath.Join(dir, "missing.list")}
-	for entry, want := range map[string]bool{
-		"pkg.example.org":      true,
-		"*.sub.example.org":    true,
-		"api.example.com:8443": true,
-		"api.example.com":      false, // default ports are not covered by 8443
-		"other.example":        false,
+	os.WriteFile(perm, []byte("*.example.org\napi.example.com:8443\n!ads.example.org\n"), 0o600)
+	ephemeral := filepath.Join(dir, "ephemeral.list")
+	os.WriteFile(ephemeral, []byte("!*.tracker.example\n"), 0o600)
+	lists := readLists(perm, ephemeral, filepath.Join(dir, "missing.list"))
+	for entry, want := range map[string]string{
+		"pkg.example.org":      control.AnswerAlreadyAllowed,
+		"*.sub.example.org":    control.AnswerAlreadyAllowed,
+		"api.example.com:8443": control.AnswerAlreadyAllowed,
+		"api.example.com":      "", // default ports are not covered by 8443
+		"other.example":        "",
+		// Blocks win over the wildcard that allows them.
+		"ads.example.org":       control.AnswerBlocked,
+		"*.ads.example.org":     control.AnswerBlocked,
+		"a.b.tracker.example":   control.AnswerBlocked,
+		"*.tracker.example:443": control.AnswerBlocked,
 	} {
-		if got := listsCover(files, entry); got != want {
-			t.Errorf("listsCover(%q) = %v, want %v", entry, got, want)
+		if got := answerFromLists(lists, entry); got != want {
+			t.Errorf("answerFromLists(%q) = %q, want %q", entry, got, want)
 		}
 	}
 }

@@ -7,7 +7,8 @@ package daemon
 // Protocol, lines both ways: the guest sends "ENTRY\tREASON\n"; the daemon
 // replies "pending\n" (or "error: ...\n" and closes), then, once the user
 // decides, one of the control.Answer* values and closes. If the entry is
-// already allowed, or the allowlist is off, it answers at once instead.
+// blocked, already allowed, or the allowlist is off, it answers at once
+// instead.
 // Everything the guest sends is untrusted.
 
 import (
@@ -142,6 +143,9 @@ func parseRequest(line string) (control.NetRequest, error) {
 	if e.Kind == netrules.KindPrefix {
 		return control.NetRequest{}, errors.New("only names can be requested, not addresses")
 	}
+	if e.Block {
+		return control.NetRequest{}, errors.New("only allowing can be requested")
+	}
 	// "*.co.uk" or "*.github.io" would cover sites of unrelated owners.
 	if _, err := publicsuffix.EffectiveTLDPlusOne(e.Name); e.Kind == netrules.KindWildcard && err != nil {
 		return control.NetRequest{}, fmt.Errorf("*.%s is too broad", e.Name)
@@ -159,33 +163,42 @@ func (d *Daemon) answerNow(entry string) string {
 	if state, err := netrules.LoadFilterState(d.inst.NetworkOffMarker(), d.inst.NetworkFilterOverride()); err == nil && state.Off {
 		return control.AnswerAllowlistOff
 	}
-	if listsCover([]string{d.inst.NetworkList(), d.inst.EphemeralNetworkList()}, entry) {
-		return control.AnswerAlreadyAllowed
+	return answerFromLists(readLists(d.inst.NetworkList(), d.inst.EphemeralNetworkList()), entry)
+}
+
+// answerFromLists answers a request the lists decide: blocked (also when
+// another entry allows it), or already allowed. A wildcard request counts as
+// blocked when its own name is.
+func answerFromLists(lists []*netrules.List, entry string) string {
+	e, err := netrules.Parse(entry)
+	if err != nil {
+		return ""
+	}
+	if slices.ContainsFunc(lists, func(l *netrules.List) bool { return l.Blocked(e.Name) }) {
+		return control.AnswerBlocked
+	}
+	for _, l := range lists {
+		if slices.ContainsFunc(l.Entries(), func(a netrules.Entry) bool { return a.Covers(e) }) {
+			return control.AnswerAlreadyAllowed
+		}
 	}
 	return ""
 }
 
-// listsCover reports whether an entry in the allowlist files covers entry.
-// Missing or unreadable files cover nothing: the request then goes to the user.
-func listsCover(files []string, entry string) bool {
-	e, err := netrules.Parse(entry)
-	if err != nil {
-		return false
-	}
+// readLists parses the list files. Missing or unreadable files are left out:
+// requests they would decide then go to the user.
+func readLists(files ...string) []*netrules.List {
+	var lists []*netrules.List
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
-		list, err := netrules.ParseList(data)
-		if err != nil {
-			continue
-		}
-		if slices.ContainsFunc(list.Entries(), func(a netrules.Entry) bool { return a.Covers(e) }) {
-			return true
+		if list, err := netrules.ParseList(data); err == nil {
+			lists = append(lists, list)
 		}
 	}
-	return false
+	return lists
 }
 
 // serveRequests accepts the guest's connections to the request port.

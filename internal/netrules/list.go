@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// List is a parsed network.list. Comments and blank lines are kept so the CLI
-// can edit the file without destroying what the user wrote.
+// List is a parsed network.list: entries that allow destinations and blocks
+// that refuse them. Comments and blank lines are kept so the CLI can edit the
+// file without destroying what the user wrote.
 type List struct {
 	lines []line
 }
@@ -21,8 +22,9 @@ type line struct {
 
 // DefaultList is written when an instance is created.
 const DefaultList = `# Network allowlist for the t3jail VM. One entry per line; see
-# ` + "`t3jail net --help`" + ` for the syntax. Edit with ` + "`t3jail net allow/remove`" + `
-# or by hand (then run ` + "`t3jail net reload`" + `).
+# ` + "`t3jail net --help`" + ` for the syntax. Edit with ` + "`t3jail net allow/block/remove`" + `
+# or by hand (then run ` + "`t3jail net reload`" + `). Lines starting with ! are
+# blocks, which win over entries that allow the same destination.
 
 # Needed to rebuild NixOS inside the VM.
 cache.nixos.org
@@ -106,13 +108,13 @@ func (l *List) Bytes() []byte {
 	return b.Bytes()
 }
 
-// PortsForName returns the union of ports of all entries matching name, and
-// whether any entry matched.
+// PortsForName returns the union of ports of all allowing entries matching
+// name, and whether any matched. Blocks are not considered: see Blocked.
 func (l *List) PortsForName(name string) ([]PortRange, bool) {
 	var ports []PortRange
 	matched := false
 	for _, e := range l.Entries() {
-		if e.Kind != KindPrefix && e.MatchesName(name) {
+		if !e.Block && e.Kind != KindPrefix && e.MatchesName(name) {
 			matched = true
 			ports = append(ports, e.EffectivePorts()...)
 		}
@@ -129,12 +131,33 @@ type PrefixRule struct {
 	Ports  []PortRange
 }
 
-// Prefixes returns the explicit address entries.
+// Prefixes returns the explicit address entries that allow.
 func (l *List) Prefixes() []PrefixRule {
 	var out []PrefixRule
 	for _, e := range l.Entries() {
-		if e.Kind == KindPrefix {
+		if !e.Block && e.Kind == KindPrefix {
 			out = append(out, PrefixRule{Prefix: e.Prefix, Ports: e.EffectivePorts()})
+		}
+	}
+	return out
+}
+
+// Blocked reports whether a block entry matches name.
+func (l *List) Blocked(name string) bool {
+	for _, e := range l.Entries() {
+		if e.Block && e.MatchesName(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// BlockedPrefixes returns the address blocks.
+func (l *List) BlockedPrefixes() []netip.Prefix {
+	var out []netip.Prefix
+	for _, e := range l.Entries() {
+		if e.Block && e.Kind == KindPrefix {
+			out = append(out, e.Prefix)
 		}
 	}
 	return out

@@ -71,9 +71,15 @@ func (f *Filter) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 	qtype := dns.TypeToString[q.Qtype]
 
 	f.mu.Lock()
-	_, allowed := f.list.PortsForName(name)
+	blocked := f.list.Blocked(name)
+	_, allowed := f.portsFor(name)
 	open := f.open
 	f.mu.Unlock()
+	if blocked {
+		f.logf("blocked\t%s\t%s", qtype, name)
+		reply(w, new(dns.Msg).SetRcode(req, dns.RcodeRefused))
+		return
+	}
 	if !allowed && !open {
 		f.logf("refused\t%s\t%s", qtype, name)
 		reply(w, new(dns.Msg).SetRcode(req, dns.RcodeRefused))
@@ -97,7 +103,18 @@ func (f *Filter) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 		stripIPv6(resp)
 	}
 
-	addrs := chainAddrs(resp, q.Name)
+	chain := chainNames(resp, q.Name)
+	f.mu.Lock()
+	blockedTarget := slices.ContainsFunc(chain, f.list.Blocked)
+	f.mu.Unlock()
+	// A CNAME into a blocked name, as trackers use to look first-party.
+	if blockedTarget {
+		f.logf("blocked\t%s\t%s\t%s", qtype, name, strings.Join(chain, " "))
+		reply(w, new(dns.Msg).SetRcode(req, dns.RcodeRefused))
+		return
+	}
+
+	addrs := chainAddrs(resp, chain)
 	if allowed {
 		// The firewall must know the addresses before the guest does, or
 		// its first connection races the set update.
@@ -140,7 +157,7 @@ func (f *Filter) exchange(req *dns.Msg, overTCP bool) (*dns.Msg, error) {
 func (f *Filter) grant(name string, addrs []netip.Addr) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	ports, ok := f.list.PortsForName(name)
+	ports, ok := f.portsFor(name)
 	if !ok || len(addrs) == 0 {
 		// The list changed while the query was in flight.
 		return nil
@@ -156,6 +173,14 @@ func (f *Filter) grant(name string, addrs []netip.Addr) error {
 		want = append(want, destinations(addr, ports)...)
 	}
 	return f.apply(netrules.Normalize(want))
+}
+
+// portsFor returns the ports a lookup of name opens, if any. Must hold f.mu.
+func (f *Filter) portsFor(name string) ([]netrules.PortRange, bool) {
+	if f.list.Blocked(name) {
+		return nil, false
+	}
+	return f.list.PortsForName(name)
 }
 
 // SetOpen makes the filter answer every name (open) or only listed ones.
@@ -181,7 +206,7 @@ func (f *Filter) SetList(list *netrules.List) error {
 
 	var want []netrules.Destination
 	for name, addrs := range f.resolved {
-		ports, ok := list.PortsForName(name)
+		ports, ok := f.portsFor(name)
 		if !ok {
 			delete(f.resolved, name)
 			continue
@@ -243,22 +268,27 @@ func destinations(addr netip.Addr, ports []netrules.PortRange) []netrules.Destin
 	return dests
 }
 
-// chainAddrs returns the addresses the answer gives for qname: A and AAAA
-// records and SVCB/HTTPS address hints owned by qname or by a name reached
-// from it through CNAMEs. Records for unrelated names are ignored, so an
-// upstream cannot smuggle extra addresses into the allow sets.
-func chainAddrs(resp *dns.Msg, qname string) []netip.Addr {
-	chain := map[string]bool{canonicalName(qname): true}
+// chainNames returns qname and the names reached from it through the answer's
+// CNAMEs, canonical and in chain order.
+func chainNames(resp *dns.Msg, qname string) []string {
+	chain := []string{canonicalName(qname)}
 	for changed := true; changed; {
 		changed = false
 		for _, rr := range resp.Answer {
-			if c, ok := rr.(*dns.CNAME); ok && chain[canonicalName(c.Hdr.Name)] && !chain[canonicalName(c.Target)] {
-				chain[canonicalName(c.Target)] = true
+			if c, ok := rr.(*dns.CNAME); ok && slices.Contains(chain, canonicalName(c.Hdr.Name)) && !slices.Contains(chain, canonicalName(c.Target)) {
+				chain = append(chain, canonicalName(c.Target))
 				changed = true
 			}
 		}
 	}
+	return chain
+}
 
+// chainAddrs returns the addresses the answer gives for the chain's names: A
+// and AAAA records and SVCB/HTTPS address hints. Records for unrelated names
+// are ignored, so an upstream cannot smuggle extra addresses into the allow
+// sets.
+func chainAddrs(resp *dns.Msg, chain []string) []netip.Addr {
 	var addrs []netip.Addr
 	add := func(ip net.IP) {
 		if a, ok := netip.AddrFromSlice(ip); ok {
@@ -266,7 +296,7 @@ func chainAddrs(resp *dns.Msg, qname string) []netip.Addr {
 		}
 	}
 	for _, rr := range resp.Answer {
-		if !chain[canonicalName(rr.Header().Name)] {
+		if !slices.Contains(chain, canonicalName(rr.Header().Name)) {
 			continue
 		}
 		switch rr := rr.(type) {

@@ -224,6 +224,20 @@ pkgs.testers.runNixOSTest {
         t3jail("net remove ${ip.cidrOnly}/32 ${lanIP}/32")
         assert not reaches("http://${lanIP}")
 
+    with subtest("blocks win over allows"):
+        t3jail("net block wild.test")
+        guest("! getent hosts wild.test")
+        assert reaches("http://a.b.wild.test")
+        assert "blocked" in guest("t3jail-request wild.test 2>&1 || true")
+        t3jail("net unblock wild.test")
+        assert reaches("http://wild.test")
+        # allowed.test has both an IPv4 and an IPv6 address.
+        t3jail("net block ${ip.allowed} ${ip.allowed6}")
+        assert not reaches("http://allowed.test")
+        assert not reaches("http://allowed.test", "-6")
+        t3jail("net unblock ${ip.allowed} ${ip.allowed6}")
+        assert reaches("http://allowed.test")
+
     with subtest("IPv6"):
         # Positive control: the host itself reaches it.
         host.succeed("curl -sS -g --max-time 5 http://[${ip.allowed6}]/")

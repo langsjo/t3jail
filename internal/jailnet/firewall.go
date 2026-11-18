@@ -91,7 +91,17 @@ func (f *Firewall) Init(abi guestabi.ABI) error {
 
 // SetHostNets replaces the host address sets.
 func (f *Firewall) SetHostNets(prefixes []netip.Prefix) error {
-	var v4, v6 []string
+	v4, v6 := splitPrefixes(prefixes)
+	return f.Apply(replaceSet("hostnets4", v4) + replaceSet("hostnets6", v6))
+}
+
+// SetBlocks replaces the address blocks.
+func (f *Firewall) SetBlocks(prefixes []netip.Prefix) error {
+	v4, v6 := splitPrefixes(prefixes)
+	return f.Apply(replaceSet("deny4", v4) + replaceSet("deny6", v6))
+}
+
+func splitPrefixes(prefixes []netip.Prefix) (v4, v6 []string) {
 	for _, p := range prefixes {
 		if p.Addr().Is4() {
 			v4 = append(v4, p.String())
@@ -99,7 +109,7 @@ func (f *Firewall) SetHostNets(prefixes []netip.Prefix) error {
 			v6 = append(v6, p.String())
 		}
 	}
-	return f.Apply(replaceSet("hostnets4", v4) + replaceSet("hostnets6", v6))
+	return v4, v6
 }
 
 // SetPrefixAllows replaces the explicit address allows. dests must be

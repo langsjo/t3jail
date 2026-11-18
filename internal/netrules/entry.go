@@ -9,6 +9,9 @@
 //	dns.example:53/udp  UDP ports end in /udp (/tcp is the default)
 //	203.0.113.0/24      addresses (also overrides the default private/host blocks)
 //	[2001:db8::/32]:443 IPv6 must be bracketed when ports follow
+//	!ads.example        a block: wins over any entry that allows the name,
+//	!*.ads.example      or for addresses, the address; no ports
+//	!198.51.100.0/24
 package netrules
 
 import (
@@ -61,7 +64,9 @@ func (r PortRange) Contains(o PortRange) bool {
 var DefaultPorts = []PortRange{{TCP, 80, 80}, {TCP, 443, 443}}
 
 type Entry struct {
-	Kind Kind
+	// Block makes the entry refuse what it matches, whatever else allows it.
+	Block bool
+	Kind  Kind
 	// Name is lower-case without a trailing dot; for wildcards the "*." is
 	// stripped.
 	Name   string
@@ -93,8 +98,12 @@ func (e Entry) MatchesName(name string) bool {
 
 // String is the canonical form, used to compare and store entries.
 // Covers reports whether e allows everything the name entry o allows.
-// Address entries are never covered: they are not matched by name.
+// Address entries are never covered: they are not matched by name. Blocks
+// allow nothing and are never covered.
 func (e Entry) Covers(o Entry) bool {
+	if e.Block || o.Block {
+		return false
+	}
 	switch o.Kind {
 	case KindName:
 		if !e.MatchesName(o.Name) {
@@ -129,6 +138,9 @@ func (e Entry) String() string {
 			host = "[" + host + "]"
 		}
 	}
+	if e.Block {
+		host = "!" + host
+	}
 	if e.Ports == nil {
 		return host
 	}
@@ -155,16 +167,21 @@ func formatPrefix(p netip.Prefix) string {
 // Parse parses one entry.
 func Parse(s string) (Entry, error) {
 	s = strings.TrimSpace(s)
-	if s == "" {
+	rest, block := strings.CutPrefix(s, "!")
+	if rest == "" {
 		return Entry{}, errors.New("empty entry")
 	}
-	host, portSpec, err := splitHostPorts(s)
+	host, portSpec, err := splitHostPorts(rest)
 	if err != nil {
 		return Entry{}, err
 	}
 	e, err := parseHost(host)
 	if err != nil {
 		return Entry{}, err
+	}
+	e.Block = block
+	if block && portSpec != nil {
+		return Entry{}, fmt.Errorf("%q: blocks cover all ports; leave out the ports", s)
 	}
 	if portSpec != nil {
 		if e.Ports, err = parsePorts(*portSpec); err != nil {

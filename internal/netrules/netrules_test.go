@@ -26,6 +26,10 @@ func TestParseCanonical(t *testing.T) {
 		"[2001:db8::1]":          "2001:db8::1",
 		"_srv.example.com":       "_srv.example.com",
 		"  spaced.example.com  ": "spaced.example.com",
+		"!Ads.Example.":          "!ads.example",
+		"!*.ads.example":         "!*.ads.example",
+		"!198.51.100.0/24":       "!198.51.100.0/24",
+		"![2001:db8::/32]":       "!2001:db8::/32",
 	}
 	for in, want := range cases {
 		e, err := Parse(in)
@@ -47,6 +51,7 @@ func TestParseRejects(t *testing.T) {
 		"", "*", "*.", "a..b", "-a.com", "a-.com", "ex ample.com", "foo*.com", "a.*.com",
 		"github.com:", "github.com:0", "github.com:70000", "github.com:443-80", "github.com:x",
 		"github.com:53/icmp", "github.com:/udp", "github.com:53/",
+		"!", "!!a.com", "!a.com:443", "![2001:db8::1]:53/udp", "! a.com",
 		"203.0.113.7/24",   // host bits set
 		"[2001:db8::1:443", // missing ]
 		"[2001:db8::1]443", // missing :
@@ -99,6 +104,38 @@ func TestPortsForNameUnionsMatchingEntries(t *testing.T) {
 	}
 	if _, ok := l.PortsForName("example.com"); ok {
 		t.Error("unlisted name matched")
+	}
+}
+
+func TestBlocksAreSeparateFromAllows(t *testing.T) {
+	l, err := ParseList([]byte("*.example.com\n!ads.example.com\n!*.track.example.com\n10.0.0.0/8:22\n!10.1.0.0/16\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"ads.example.com":       true,
+		"x.ads.example.com":     false,
+		"track.example.com":     true,
+		"a.b.track.example.com": true,
+		"www.example.com":       false,
+	} {
+		if got := l.Blocked(name); got != want {
+			t.Errorf("Blocked(%q) = %v, want %v", name, got, want)
+		}
+	}
+	// The allowing entry still matches: the filter checks Blocked first.
+	if _, ok := l.PortsForName("ads.example.com"); !ok {
+		t.Error("blocks changed PortsForName")
+	}
+	if got := l.BlockedPrefixes(); !slices.Equal(got, []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}) {
+		t.Errorf("BlockedPrefixes = %v", got)
+	}
+	if got := l.Prefixes(); len(got) != 1 || got[0].Prefix != netip.MustParsePrefix("10.0.0.0/8") {
+		t.Errorf("Prefixes = %v", got)
+	}
+	allow, block := mustParse(t, "ads.example.com"), mustParse(t, "!ads.example.com")
+	if l.Contains(allow) || !l.Contains(block) {
+		t.Error("an allow and a block of the same name must be different entries")
 	}
 }
 
@@ -173,6 +210,8 @@ func TestCovers(t *testing.T) {
 		{"example.com:443,443/udp", "example.com:443/udp", true},
 		{"other.com", "example.com", false},
 		{"192.0.2.1", "example.com", false},
+		{"!example.com", "example.com", false},
+		{"*.example.com", "!api.example.com", false},
 	} {
 		a, b := mustParse(t, tc.allow), mustParse(t, tc.req)
 		if got := a.Covers(b); got != tc.want {

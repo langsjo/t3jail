@@ -202,6 +202,42 @@ func TestUnlistedNameIsRefusedWithoutAskingUpstream(t *testing.T) {
 	h.wantGrants()
 }
 
+func TestBlockedNameIsRefusedEvenIfAllowed(t *testing.T) {
+	h := newHarness(t, "*.example.com\n!ads.example.com\n", zone{
+		"A ads.example.com.": {"ads.example.com. 60 IN A 192.0.2.66"},
+		"A www.example.com.": {"www.example.com. 60 IN A 192.0.2.80"},
+	})
+	if resp := h.query("ADS.example.com", dns.TypeA); resp.Rcode != dns.RcodeRefused {
+		t.Errorf("rcode %s", dns.RcodeToString[resp.Rcode])
+	}
+	if q := h.upstreamQueries(); len(q) != 0 {
+		t.Errorf("upstream saw %v", q)
+	}
+	if !strings.Contains(h.log.String(), "blocked\tA\tads.example.com") {
+		t.Errorf("log: %q", h.log.String())
+	}
+	h.query("www.example.com", dns.TypeA)
+	h.wantGrants("192.0.2.80:80", "192.0.2.80:443")
+
+	// Blocking a resolved name revokes its addresses.
+	h.setList("*.example.com\n!ads.example.com\n!www.example.com\n")
+	h.wantGrants()
+}
+
+func TestCNAMEIntoABlockedNameIsRefused(t *testing.T) {
+	h := newHarness(t, "metrics.example.com\n!*.tracker.example\n", zone{"A metrics.example.com.": {
+		"metrics.example.com. 60 IN CNAME eu.tracker.example.",
+		"eu.tracker.example. 60 IN A 192.0.2.66",
+	}})
+	if resp := h.query("metrics.example.com", dns.TypeA); resp.Rcode != dns.RcodeRefused {
+		t.Errorf("rcode %s", dns.RcodeToString[resp.Rcode])
+	}
+	h.wantGrants()
+	if !strings.Contains(h.log.String(), "blocked\tA\tmetrics.example.com\tmetrics.example.com eu.tracker.example") {
+		t.Errorf("log: %q", h.log.String())
+	}
+}
+
 func TestCNAMEChainIsFollowedAndUnrelatedRecordsIgnored(t *testing.T) {
 	h := newHarness(t, "github.com\n", zone{"A github.com.": {
 		"github.com. 60 IN CNAME edge.cdn.example.",

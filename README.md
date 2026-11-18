@@ -44,7 +44,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `stop [--force]`, `status [--json]` | Shut it down; show its state and size. |
 | `ssh [-- cmd]`, `console` | Shell over SSH; serial console (Ctrl-] detaches). |
 | `logs [-f] [--log serial\|dns\|daemon]` | Logs. |
-| `net allow\|remove\|list\|log\|reload\|requests` | Network allowlist, see below. |
+| `net allow\|block\|remove\|unblock\|list\|log\|reload\|requests` | Network allowlist, see below. |
 | `mount add\|remove\|list` | Share host directories, see below. |
 | `port open\|close to\|from PORT[:PORT]...`, `port list` | Forward TCP ports into (`to`) or out of (`from`) the VM until closed or the VM stops; `open --persist` also opens them at every start. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
@@ -86,6 +86,15 @@ below it), addresses and networks (`192.0.2.7`, `198.51.100.0/24`,
 `:8000-8100` replace them. Ports ending in `/udp` are UDP: `:53/udp`,
 `:443,443/udp` (HTTP/3 too).
 
+Blocks win over everything that allows the same destination:
+
+    t3jail net block -p '*.ads.example'      # stored as !*.ads.example
+    t3jail net block 198.51.100.0/24         # every port and protocol
+    t3jail net unblock '*.ads.example'
+
+A blocked name is refused by the VM's DNS, also when an allowed name is a
+CNAME alias for it; a blocked address is refused by the firewall.
+
 Names are enforced by address: when the VM resolves an allowed name, the
 answer's addresses are opened for that entry's ports. Changes apply
 immediately; removing an entry also cuts its open connections.
@@ -106,7 +115,8 @@ none); `t3jail net requests` lists the
 pending requests and lets you mark each as kept blocked, allowed until the VM
 stops, or allowed permanently. `t3jail net allow` also answers matching
 requests. Only names can be requested, not addresses, so a request never
-overrides the block of private and host networks.
+overrides the block of private and host networks. A request for a blocked
+name is answered `blocked` at once.
 
 To let the VM reach any internet destination for a while without editing the
 allowlist:

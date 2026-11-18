@@ -60,6 +60,9 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 		{Prefix: netip.MustParsePrefix("2001:db8::/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 8000, Last: 8100}},
 		{Prefix: netip.MustParsePrefix("192.168.1.50/32"), Ports: netrules.PortRange{Proto: netrules.UDP, First: 53, Last: 53}},
 	}))
+	// Overlapping blocks are merged by the set.
+	must(fw.SetBlocks([]netip.Prefix{netip.MustParsePrefix("198.18.0.0/24"), netip.MustParsePrefix("2001:db8:1::/48")}))
+	must(fw.SetBlocks([]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("203.0.113.128/25"), netip.MustParsePrefix("2001:db8:2::/48")}))
 	keep := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.4/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 443, Last: 443}}
 	gone := netrules.Destination{Prefix: netip.MustParsePrefix("140.82.121.5/32"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 443, Last: 443}}
 	v6 := netrules.Destination{Prefix: netip.MustParsePrefix("2606:50c0:8000::154/128"), Ports: netrules.PortRange{Proto: netrules.TCP, First: 22, Last: 22}}
@@ -78,12 +81,14 @@ func TestFirewallOperationsApplyToRealNft(t *testing.T) {
 		"140.82.121.4 . tcp . 443",
 		"2606:50c0:8000::154 . tcp . 22",
 		"140.82.121.6 . tcp . 80-95",
+		"203.0.113.0/24",
+		"2001:db8:2::/48",
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("table lacks %q:\n%s", want, table)
 		}
 	}
-	for _, unwanted := range []string{"81.2.69.0/24", "2a00:1450::/32", "140.82.121.5", "80-90"} {
+	for _, unwanted := range []string{"81.2.69.0/24", "2a00:1450::/32", "140.82.121.5", "80-90", "198.18.0.0/24", "2001:db8:1::/48", "203.0.113.128"} {
 		if strings.Contains(table, unwanted) {
 			t.Errorf("table still has %q:\n%s", unwanted, table)
 		}
@@ -96,6 +101,7 @@ func TestEmptyUpdatesAreValidScripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	fw.SetHostNets(nil)
+	fw.SetBlocks(nil)
 	fw.SetPrefixAllows(nil)
 	fw.UpdateDNSAllows(nil, nil)
 	runInFreshNetns(t, *scripts)

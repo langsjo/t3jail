@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -34,13 +35,21 @@ Each entry may end in :PORTS, e.g. :22, :80,443 or :8000-8100. Ports are
 TCP unless they end in /udp, e.g. :53/udp or :443,443/udp (HTTP/3). Without
 :PORTS, TCP ports 80 and 443 are allowed.
 
+Blocks (` + "`t3jail net block`" + `, lines starting with ! in network.list) win
+over any entry that allows the same name or address:
+
+  !ads.example        this name; also refused when another name is a CNAME
+                      alias for it
+  !*.ads.example      this name and all names below it
+  !198.51.100.0/24    an address or network, on every port and protocol
+
 Changes apply immediately to a running VM. Already resolved addresses stay
 allowed until the entry that caused them is removed or the VM restarts.
 
 ` + "`t3jail net disable`" + ` lets the VM reach any internet destination for a while
 without changing the allowlist; ` + "`t3jail net enable`" + ` applies it again.`,
 	}
-	cmd.AddCommand(newNetAllowCmd(), newNetRemoveCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(), newNetRequestsCmd(),
+	cmd.AddCommand(newNetAllowCmd(), newNetBlockCmd(), newNetRemoveCmd(), newNetUnblockCmd(), newNetListCmd(), newNetReloadCmd(), newNetLogCmd(), newNetRequestsCmd(),
 		newNetSwitchCmd(true), newNetSwitchCmd(false))
 	return cmd
 }
@@ -58,6 +67,11 @@ func newNetAllowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			for _, e := range entries {
+				if e.Block {
+					return fmt.Errorf("%s is a block; use `t3jail net block`", e)
+				}
+			}
 			inst, err := instance()
 			if err != nil {
 				return err
@@ -72,27 +86,98 @@ func newNetAllowCmd() *cobra.Command {
 // allowEntries adds entries to the allowlist, applies it, and answers the
 // guest's pending requests they cover.
 func allowEntries(ctx context.Context, inst paths.Instance, entries []netrules.Entry, persistent bool) error {
+	_, lists, err := addEntries(ctx, inst, entries, persistent, "allowed")
+	if err != nil || lists == nil {
+		return err
+	}
+	var unblocked []netrules.Entry
+	for _, e := range entries {
+		if e.Kind != netrules.KindPrefix && (lists.persistent.Blocked(e.Name) || lists.ephemeral.Blocked(e.Name)) {
+			fmt.Printf("%s stays blocked by a block entry (see `t3jail net list`)\n", e)
+		} else {
+			unblocked = append(unblocked, e)
+		}
+	}
+	answer := control.AnswerAllowed
+	if persistent {
+		answer = control.AnswerAllowedPerm
+	}
+	answerPending(ctx, control.NewClient(inst.ControlSocket()), answer, func(req netrules.Entry) bool {
+		return slices.ContainsFunc(unblocked, func(e netrules.Entry) bool { return e.Covers(req) })
+	})
+	return nil
+}
+
+func newNetBlockCmd() *cobra.Command {
+	var persistent bool
+	cmd := &cobra.Command{
+		Use:   "block <entry>...",
+		Short: "Block destinations until the VM stops, or permanently with -p",
+		Long: `Block names or addresses, whatever else allows them. A blocked name is
+refused by the VM's DNS; a blocked address on every port and protocol.
+Connections to newly blocked addresses are cut.`,
+		Example: `  t3jail net block -p '*.ads.example'
+  t3jail net block 198.51.100.0/24`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entries, err := parseBlocks(args)
+			if err != nil {
+				return err
+			}
+			inst, err := instance()
+			if err != nil {
+				return err
+			}
+			added, lists, err := addEntries(cmd.Context(), inst, entries, persistent, "blocked")
+			if err != nil || lists == nil {
+				return err
+			}
+			answerPending(cmd.Context(), control.NewClient(inst.ControlSocket()), control.AnswerBlocked, func(req netrules.Entry) bool {
+				return slices.ContainsFunc(added, func(e netrules.Entry) bool { return e.MatchesName(req.Name) })
+			})
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&persistent, "persistent", "p", false, "save the block in network.list so it survives restarts")
+	return cmd
+}
+
+// parseBlocks parses block arguments, with or without the leading !.
+func parseBlocks(args []string) ([]netrules.Entry, error) {
+	blocks := make([]string, len(args))
+	for i, arg := range args {
+		blocks[i] = "!" + strings.TrimPrefix(strings.TrimSpace(arg), "!")
+	}
+	return parseEntries(blocks)
+}
+
+// addEntries adds entries to the persistent or the ephemeral list and applies
+// the lists. It returns the entries it added and the lists after the change,
+// or nil lists if no running VM could be told (the reason is printed).
+func addEntries(ctx context.Context, inst paths.Instance, entries []netrules.Entry, persistent bool, verb string) ([]netrules.Entry, *networkLists, error) {
 	client := control.NewClient(inst.ControlSocket())
 	if !persistent {
 		if _, err := client.Status(ctx); err != nil {
 			if errors.Is(err, control.ErrNotRunning) {
-				return errors.New("the VM is not running; use --persistent to allow from the next start on")
+				return nil, nil, fmt.Errorf("the VM is not running; use --persistent to keep it %s from the next start on", verb)
 			}
-			return err
+			return nil, nil, err
 		}
 	}
 
 	var added []netrules.Entry
+	var after networkLists
 	err := withNetworkLists(inst, func(lists networkLists) error {
+		after = lists
 		target := lists.ephemeral
 		if persistent {
 			target = lists.persistent
 		}
 		for _, e := range entries {
 			if lists.persistent.Contains(e) {
-				fmt.Printf("%s is already allowed permanently\n", e)
+				fmt.Printf("%s is already %s permanently\n", e, verb)
 			} else if !target.Add(e) {
-				fmt.Printf("%s is already allowed\n", e)
+				fmt.Printf("%s is already %s\n", e, verb)
 			} else {
 				added = append(added, e)
 			}
@@ -100,50 +185,44 @@ func allowEntries(ctx context.Context, inst paths.Instance, entries []netrules.E
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	running := true
 	if len(added) > 0 {
 		if running, err = applyNetwork(ctx, client); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if !running && !persistent {
 			// The VM stopped after the check above. The entry is discarded
 			// when the VM next starts.
-			return errors.New("the VM stopped before the change applied; nothing was allowed")
+			return nil, nil, fmt.Errorf("the VM stopped before the change applied; nothing was %s", verb)
 		}
 	}
-	until, answer := "until the VM stops", control.AnswerAllowed
+	until := "until the VM stops"
 	if persistent {
-		until, answer = "permanently", control.AnswerAllowedPerm
+		until = "permanently"
 	}
 	for _, e := range added {
-		fmt.Printf("Allowed %s %s\n", e, until)
+		fmt.Printf("%s %s %s\n", strings.ToUpper(verb[:1])+verb[1:], e, until)
 	}
 	printIfStopped(running)
-	if running {
-		answerCovered(ctx, client, entries, answer)
+	if !running {
+		return added, nil, nil
 	}
-	return nil
+	return added, &after, nil
 }
 
-// answerCovered answers the pending requests that entries cover. Best effort:
-// the allowlist change is what matters.
-func answerCovered(ctx context.Context, client *control.Client, entries []netrules.Entry, answer string) {
+// answerPending gives answer to the pending requests that match. Best effort:
+// the list change is what matters.
+func answerPending(ctx context.Context, client *control.Client, answer string, match func(netrules.Entry) bool) {
 	reqs, err := client.NetRequests(ctx)
 	if err != nil {
 		return
 	}
 	answers := map[string]string{}
 	for _, r := range reqs {
-		re, err := netrules.Parse(r.Entry)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.Covers(re) {
-				answers[r.Entry] = answer
-			}
+		if re, err := netrules.Parse(r.Entry); err == nil && match(re) {
+			answers[r.Entry] = answer
 		}
 	}
 	if len(answers) > 0 {
@@ -163,40 +242,61 @@ until the VM stops. Entries must be given as listed, ports included.`,
 			if err != nil {
 				return err
 			}
-			inst, err := instance()
-			if err != nil {
-				return err
-			}
-			err = withNetworkLists(inst, func(lists networkLists) error {
-				for _, e := range entries {
-					if !lists.persistent.Contains(e) && !lists.ephemeral.Contains(e) {
-						return fmt.Errorf("%s is not in the allowlist (see `t3jail net list`)", e)
-					}
-				}
-				for _, e := range entries {
-					lists.persistent.Remove(e)
-					lists.ephemeral.Remove(e)
-					fmt.Printf("Removed %s\n", e)
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			running, err := applyNetwork(cmd.Context(), control.NewClient(inst.ControlSocket()))
-			if err != nil {
-				return err
-			}
-			printIfStopped(running)
-			return nil
+			return removeEntries(cmd.Context(), entries)
 		},
 	}
+}
+
+func newNetUnblockCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unblock <entry>...",
+		Short: "Remove blocks",
+		Long: `Remove blocks, whether they were added permanently or until the VM stops.
+Entries must be given as listed, with or without the leading !.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entries, err := parseBlocks(args)
+			if err != nil {
+				return err
+			}
+			return removeEntries(cmd.Context(), entries)
+		},
+	}
+}
+
+func removeEntries(ctx context.Context, entries []netrules.Entry) error {
+	inst, err := instance()
+	if err != nil {
+		return err
+	}
+	err = withNetworkLists(inst, func(lists networkLists) error {
+		for _, e := range entries {
+			if !lists.persistent.Contains(e) && !lists.ephemeral.Contains(e) {
+				return fmt.Errorf("%s is not in the list (see `t3jail net list`)", e)
+			}
+		}
+		for _, e := range entries {
+			lists.persistent.Remove(e)
+			lists.ephemeral.Remove(e)
+			fmt.Printf("Removed %s\n", e)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	running, err := applyNetwork(ctx, control.NewClient(inst.ControlSocket()))
+	if err != nil {
+		return err
+	}
+	printIfStopped(running)
+	return nil
 }
 
 func newNetListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "Print the allowlist",
+		Short: "Print the allowlist and blocks",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			inst, err := instance()
