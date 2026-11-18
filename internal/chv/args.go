@@ -24,13 +24,14 @@ type LaunchSpec struct {
 	Initramfs string
 	Cmdline   string
 
-	CPUs     int
-	MaxCPUs  int
-	Nested   bool // expose VMX/SVM so the guest can run KVM
-	Memory   vmspec.Memory
-	Shares   []Share
-	TapFD    int // 0 means no network device
-	GuestMAC string
+	CPUs              int
+	MaxCPUs           int
+	Nested            bool // expose VMX/SVM so the guest can run KVM
+	FreePageReporting bool
+	Memory            vmspec.Memory
+	Shares            []Share
+	TapFD             int // 0 means no network device
+	GuestMAC          string
 }
 
 type Share struct {
@@ -59,6 +60,9 @@ func Args(s LaunchSpec) ([]string, error) {
 		"--console", "off",
 		"--vsock", kv("cid", strconv.FormatUint(uint64(s.VsockCID), 10), "socket", s.VsockSocket),
 		"--rng", "src=/dev/urandom",
+	}
+	if s.FreePageReporting {
+		args = append(args, "--balloon", "size=0,free_page_reporting=on")
 	}
 	if s.Firmware != "" {
 		args = append(args, "--firmware", s.Firmware)

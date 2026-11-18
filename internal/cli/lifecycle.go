@@ -81,10 +81,11 @@ func newStartCmd() *cobra.Command {
 				return err
 			}
 			spec := daemon.RunSpec{
-				Resources:  resources,
-				NestedVirt: cfg.NestedVirt,
-				Firmware:   os.Getenv(envFirmware),
-				T3Listen:   listen,
+				Resources:         resources,
+				NestedVirt:        cfg.NestedVirt,
+				FreePageReporting: cfg.FreePageReporting,
+				Firmware:          os.Getenv(envFirmware),
+				T3Listen:          listen,
 
 				RequestReminder: time.Duration(cfg.Net.RequestReminderSecs) * time.Second,
 			}

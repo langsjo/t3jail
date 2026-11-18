@@ -19,7 +19,10 @@
       ];
       kernelModules = [ "vmw_vsock_virtio_transport" ];
     };
-    kernelModules = [ "virtio_mem" ];
+    kernelModules = [
+      "virtio_mem"
+      "virtio_balloon"
+    ];
   };
 
   # The clock follows the host through kvm-clock, so NTP is not needed (and

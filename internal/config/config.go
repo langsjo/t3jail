@@ -24,6 +24,8 @@ type Config struct {
 	DiskSize ByteSize `toml:"disk_size"`
 	// Let the guest run its own VMs through nested KVM.
 	NestedVirt bool `toml:"nested_virt"`
+	// Let the guest hand free RAM back to the host.
+	FreePageReporting bool `toml:"free_page_reporting"`
 
 	T3  T3Config  `toml:"t3"`
 	Net NetConfig `toml:"net"`
@@ -75,11 +77,12 @@ func (t T3Config) ListenAddrs() ([]netip.AddrPort, error) {
 
 func Defaults() Config {
 	return Config{
-		CPUs:     4,
-		Memory:   8 * GiB,
-		DiskSize: 64 * GiB,
-		T3:       T3Config{HostPort: 37730, Listen: []string{"127.0.0.1"}},
-		Net:      NetConfig{RequestReminderSecs: 60},
+		CPUs:              4,
+		Memory:            8 * GiB,
+		DiskSize:          64 * GiB,
+		FreePageReporting: true,
+		T3:                T3Config{HostPort: 37730, Listen: []string{"127.0.0.1"}},
+		Net:               NetConfig{RequestReminderSecs: 60},
 	}
 }
 
@@ -151,6 +154,9 @@ disk_size = %q
 # enabled in the host's kvm_intel or kvm_amd module, and widens what the VM
 # can reach in the host kernel. Takes effect on the next start.
 nested_virt = false
+
+# Let the VM return unused RAM to the host. Takes effect on the next start.
+free_page_reporting = true
 
 [t3]
 # The T3 server is forwarded to this port on the host.

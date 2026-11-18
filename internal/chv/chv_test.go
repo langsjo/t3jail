@@ -106,6 +106,26 @@ func TestArgsNested(t *testing.T) {
 	}
 }
 
+func TestArgsFreePageReporting(t *testing.T) {
+	s := baseSpec()
+	args, err := Args(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(args, "--balloon") {
+		t.Errorf("unexpected --balloon in %q", args)
+	}
+
+	s.FreePageReporting = true
+	args, err = Args(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argValue(t, args, "--balloon"); got != "size=0,free_page_reporting=on" {
+		t.Errorf("--balloon = %q", got)
+	}
+}
+
 // fakeCH serves the API on a Unix socket and records requests.
 func fakeCH(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()

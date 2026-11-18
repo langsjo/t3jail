@@ -162,6 +162,11 @@ their own VMs. The host's `kvm_intel` or `kvm_amd` module must have nested
 virtualization enabled (`nested=1`, the default on recent kernels); `start`
 checks this. It applies from the next start, and never to the rescue system.
 
+Free page reporting returns unused guest RAM to the host while keeping it
+available for the VM to use again. It is enabled by default for normal and
+rescue boots. Set `free_page_reporting = false` in config.toml to disable it
+on the next start.
+
 ### The VM's own configuration
 
 The VM is self-contained: its own `/nix/store`, bootloader and

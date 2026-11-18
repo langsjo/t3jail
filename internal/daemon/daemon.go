@@ -39,6 +39,8 @@ type RunSpec struct {
 	Resources vmspec.Resources
 	// NestedVirt lets the guest use KVM itself.
 	NestedVirt bool
+	// FreePageReporting lets the guest hand free RAM back to the host.
+	FreePageReporting bool
 	// Firmware boots the VM's disk; Rescue, if set, boots the rescue system
 	// instead.
 	Firmware string
@@ -232,16 +234,17 @@ func (d *Daemon) writeMeta() error {
 func (d *Daemon) startVM() (*exec.Cmd, error) {
 	res := d.spec.Resources
 	launch := chv.LaunchSpec{
-		APISocket:    d.inst.CHAPISocket(),
-		SerialSocket: d.inst.SerialSocket(),
-		VsockSocket:  d.inst.VsockSocket(),
-		VsockCID:     d.abi.VsockCID,
-		Disk:         d.inst.Disk(),
-		CPUs:         res.CPUs,
-		MaxCPUs:      res.MaxCPUs,
-		Nested:       d.spec.NestedVirt,
-		Memory:       res.SplitMemory(),
-		Shares:       d.bootShares(),
+		APISocket:         d.inst.CHAPISocket(),
+		SerialSocket:      d.inst.SerialSocket(),
+		VsockSocket:       d.inst.VsockSocket(),
+		VsockCID:          d.abi.VsockCID,
+		Disk:              d.inst.Disk(),
+		CPUs:              res.CPUs,
+		MaxCPUs:           res.MaxCPUs,
+		Nested:            d.spec.NestedVirt,
+		FreePageReporting: d.spec.FreePageReporting,
+		Memory:            res.SplitMemory(),
+		Shares:            d.bootShares(),
 	}
 	if r := d.spec.Rescue; r != nil {
 		launch.Kernel, launch.Initramfs, launch.Cmdline = r.Kernel, r.Initramfs, r.Cmdline
