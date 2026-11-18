@@ -104,11 +104,14 @@ const (
 var marks = [...]string{"[ ]", "[✓]", "[P]"}
 
 // picker is the state of the request list; key handling is separate from
-// the terminal so it can be tested.
+// the terminal so it can be tested. The cursor goes one past the last
+// request, onto the submit button.
 type picker struct {
 	choices []choice
 	cursor  int
 }
+
+func (p *picker) onSubmit() bool { return p.cursor == len(p.choices) }
 
 // key handles one read from the raw terminal (an arrow key's escape sequence
 // usually arrives whole; a split one is ignored) and reports whether the user
@@ -118,11 +121,12 @@ func (p *picker) key(k string) (done, apply bool) {
 	case "\x1b[A", "k":
 		p.cursor = max(p.cursor-1, 0)
 	case "\x1b[B", "j":
-		p.cursor = min(p.cursor+1, len(p.choices)-1)
-	case " ":
+		p.cursor = min(p.cursor+1, len(p.choices))
+	case " ", "\r", "\n":
+		if p.onSubmit() {
+			return true, true
+		}
 		p.choices[p.cursor] = (p.choices[p.cursor] + 1) % choice(len(marks))
-	case "\r", "\n":
-		return true, true
 	case "q", "\x03":
 		return true, false
 	}
@@ -130,7 +134,7 @@ func (p *picker) key(k string) (done, apply bool) {
 }
 
 var pickHelp = [...]string{
-	"↑/↓ move, space cycles, enter applies (unmarked stay blocked), q leaves all pending",
+	"↑/↓ move, enter/space cycles, Submit applies (unmarked stay blocked), q leaves all pending",
 	"[ ] keep blocked   [✓] allow until the VM stops   [P] allow permanently",
 }
 
@@ -175,9 +179,10 @@ func pick(in *os.File, out io.Writer, lines []string) (choices []choice, ok bool
 		for _, h := range pickHelp {
 			frame.WriteString(truncate(h, width-1) + "\r\n")
 		}
-		// Show the rows that fit, keeping the cursor visible.
-		rows := max(min(len(lines), maxPickRows, height-len(pickHelp)-1), 1)
-		first := max(p.cursor-rows+1, 0)
+		// Show the rows that fit below the help and above the button,
+		// keeping the cursor visible.
+		rows := max(min(len(lines), maxPickRows, height-len(pickHelp)-2), 1)
+		first := max(min(p.cursor, len(lines)-1)-rows+1, 0)
 		for i := first; i < first+rows; i++ {
 			cur := "  "
 			if i == p.cursor {
@@ -185,8 +190,13 @@ func pick(in *os.File, out io.Writer, lines []string) (choices []choice, ok bool
 			}
 			frame.WriteString(truncate(cur+marks[p.choices[i]]+" "+lines[i], width-1) + "\r\n")
 		}
+		if p.onSubmit() {
+			frame.WriteString("> \x1b[7m[ Submit ]\x1b[27m\r\n")
+		} else {
+			frame.WriteString("  [ Submit ]\r\n")
+		}
 		fmt.Fprint(out, frame.String())
-		drawn = len(pickHelp) + rows
+		drawn = len(pickHelp) + rows + 1
 		n, err := in.Read(buf)
 		if err != nil {
 			return nil, false, err
