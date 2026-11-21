@@ -7,6 +7,9 @@
       "memhp_default_state=online"
       "memory_hotplug.online_policy=auto-movable"
       "memory_hotplug.auto_movable_ratio=301"
+      # The host memfd uses 4 KiB pages. Smaller reports need no migration,
+      # and reporting moves those blocks to the tail of the guest free lists.
+      "page_reporting.page_reporting_order=4"
       # ssh.nix defines its own vsock socket.
       "systemd.ssh_auto=no"
     ];
