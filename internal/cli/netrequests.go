@@ -19,7 +19,7 @@ func newNetRequestsCmd() *cobra.Command {
 		Use:   "requests",
 		Short: "Answer the VM's requests to reach blocked names",
 		Long: `Processes in the VM can ask for a name to be allowed with
-` + "`t3jail-request NAME [REASON]`" + `. This lists the pending requests; on a terminal,
+` + "`t3jail-request NAME... [REASON]`" + `. This lists the pending requests; on a terminal,
 pick for each whether to keep it blocked, allow it until the VM stops, or
 allow it permanently. ` + "`t3jail net allow`" + ` also answers matching requests.`,
 		Args: cobra.NoArgs,

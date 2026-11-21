@@ -106,16 +106,17 @@ address or network entry overrides that block.
 
 Agents can ask for a blocked name instead of working around it:
 
-    t3jail-request registry.npmjs.org "install the frontend's dependencies"   # in the VM
+    t3jail-request registry.npmjs.org '*.pypi.org' "install the dependencies"   # in the VM
 
-This waits until you answer and exits 0 if allowed. You get a desktop
+This waits until you answer and exits 0 if all the names are allowed. You get a desktop
 notification (if `notify-send` is installed), repeated every minute while
 requests are unanswered (`[net] request_reminder_secs` in config.toml, 0 for
 none); `t3jail net requests` lists the
 pending requests and lets you mark each as kept blocked, allowed until the VM
 stops, or allowed permanently. `t3jail net allow` also answers matching
 requests. Only names can be requested, not addresses, so a request never
-overrides the block of private and host networks. A request for a blocked
+overrides the block of private and host networks, and wildcards that would
+cover a public suffix (`*.com`, `*.github.io`) are refused. A request for a blocked
 name is answered `blocked` at once.
 
 The network mode says what is enforced, without editing the list:
