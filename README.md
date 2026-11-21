@@ -49,7 +49,7 @@ To install it, add `github:langsjo/t3jail` as a flake input and put
 | `port open\|close to\|from PORT[:PORT]...`, `port list` | Forward TCP ports into (`to`) or out of (`from`) the VM until closed or the VM stops; `open --persist` also opens them at every start. |
 | `resize [-c/--cpu N] [-m/--mem SIZE]` | Change vCPUs and RAM while running. |
 | `config pull\|push [--switch]` | Sync the VM's `/etc/nixos` with a host clone. |
-| `git pull\|push [-r/--repo REPO] [-b/--branch BRANCH]` | Sync a branch between this checkout and a repository in the VM. |
+| `git remote add [NAME] [-r/--repo REPO]` | Add a git remote for a repository in the VM, see below. |
 | `pair` | Sign a T3 client in to the server in the VM. |
 | `disk resize SIZE` | Grow the disk and root filesystem, also while running. |
 | `start --rescue` | Boot the rescue system, see Recovery. |
@@ -183,22 +183,26 @@ rebuilds.
 ### Git repositories in the VM
 
 Agents commit in the VM, which has none of your credentials. To publish their
-work, bring it to a host checkout and push from there:
+work, bring it to a host checkout and push from there. A repository in the
+VM is a git remote with the URL `t3jail::<repo>`, where `<repo>` is a folder
+name in the VM's `~/.t3/projects` (where T3 Code puts projects) or an
+absolute path:
 
     cd ~/src/project
-    t3jail git pull                  # fast-forward to the VM's branch of the same name
-    git log -p @{1}..                # review what came in
-    git push
-    t3jail git push -b fix-typo      # send host commits to a VM branch
+    t3jail git remote add            # remote "t3jail" for ~/.t3/projects/project
+    git fetch t3jail
+    git log -p main..t3jail/main     # review what came in
+    git merge --ff-only t3jail/main
+    git push                         # to your usual remote
+    git push t3jail HEAD:fix-typo    # send host commits to a VM branch
+    git clone t3jail::other-project  # works without a checkout too
 
-The VM repository is `--repo`: a folder name in the VM's `~/.t3/projects`
-(where T3 Code puts projects) or an absolute path. Without it, t3jail uses
-the one this checkout last synced with, else the project folder with the
-checkout's name. The branch is `--branch`, else the current branch, which the
-VM repository must then have; only `push --branch` creates a branch there.
-`pull` fetches into `refs/remotes/t3jail/<branch>`; `push` updates the VM's
-checked-out work tree and is refused while it has uncommitted changes. Only
-commits are transferred, never git config or hooks.
+git reaches the VM through `git-remote-t3jail`, which the package installs
+next to `t3jail` (`nix run` does not put it on PATH). It uses t3jail's own
+SSH connection; your git config and `~/.ssh` are not involved. A push to the
+branch the VM has checked out updates its work tree, and is refused while
+that has uncommitted changes. Only commits are transferred, never git config
+or hooks.
 
 ### T3 Code
 
@@ -248,9 +252,12 @@ host:
 1. **Shared directories.** Writable unless `--ro`. Files agents write there,
    such as `.envrc`, git hooks or a `flake.nix` with a `shellHook`, run on the
    host when you use those tools in that directory. Review before you do.
-2. **`config pull`.** The clone's files are written by agents. Git transfers
-   neither hooks nor `.git/config`, but review the files before evaluating
-   them with Nix or allowing them with direnv on the host.
+2. **`config pull` and `t3jail::` remotes.** What you fetch is written by
+   agents. Git transfers neither hooks nor `.git/config`, but review the
+   commits before building or running them, evaluating them with Nix or
+   allowing them with direnv on the host. git prints the VM's `remote:`
+   messages itself; it masks control characters in them other than colors,
+   so keep `sideband.allowControlCharacters` at its default.
 3. **The desktop app** talks to a server the agents control. Keep the app's
    local environment off (the app lets you switch it back on), and
    keep T3's "linked environments" and T3 Connect off: they let one

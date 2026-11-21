@@ -1,192 +1,199 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/langsjo/t3jail/internal/control"
 	"github.com/langsjo/t3jail/internal/gitrepos"
-	"github.com/langsjo/t3jail/internal/paths"
-	"github.com/langsjo/t3jail/internal/sshx"
 	"github.com/langsjo/t3jail/internal/termsafe"
 )
 
-// vmRefPrefix holds the host's view of the VM branches it synced with.
-const vmRefPrefix = "refs/remotes/t3jail/"
+// gitRemoteHelper is the executable git runs for t3jail::<repo> URLs.
+const gitRemoteHelper = "git-remote-t3jail"
 
-// receivePack lets a push update the branch the VM has checked out, as long
-// as its work tree is clean, without changing the VM repository's config.
-const receivePack = "git -c receive.denyCurrentBranch=updateInstead receive-pack"
+// gitServices maps the services git asks the remote helper for to the
+// command run in the VM. A push updates the branch the VM has checked out, as
+// long as its work tree is clean, without changing the VM repository's config.
+var gitServices = map[string]string{
+	"git-upload-pack":    "git-upload-pack",
+	"git-upload-archive": "git-upload-archive",
+	"git-receive-pack":   "git -c receive.denyCurrentBranch=updateInstead receive-pack",
+}
 
 func newGitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "git",
-		Short: "Pull or push a branch between this checkout and a repository in the VM",
-		Long: `Run these in a git checkout on the host. They use t3jail's own SSH
-connection; your git config and ~/.ssh are not changed.
+		Short: "Use repositories in the VM as git remotes",
+		Long: `A repository in the VM is a git remote with the URL t3jail::<repo>, where
+<repo> is a folder name in the VM's ~/.t3/projects (where T3 Code puts
+projects) or an absolute path in the VM. git reaches it through ` + gitRemoteHelper + `,
+which comes with t3jail and uses t3jail's own SSH connection; your git config
+and ~/.ssh are not involved.
 
-The VM repository is --repo (a folder name in the VM's ~/.t3/projects, where
-T3 Code puts projects, or an absolute path in the VM), else the one this
-checkout last synced with, else the folder in ~/.t3/projects with the same
-name as this checkout. The choice is remembered for this checkout.
+    t3jail git remote add            # in a checkout: add the remote "t3jail"
+    git fetch t3jail
+    git push t3jail HEAD:fix-typo
+    git clone t3jail::myproject
 
-The branch is --branch, else the current branch, which the VM repository must
-then have.
-
-pull fetches the VM branch into refs/remotes/t3jail/<branch> and fast-forwards
-the current branch to it. push sends HEAD to the VM branch; only --branch can
-create it. If the VM has that branch checked out, its work tree is updated,
-and the push is refused while it has uncommitted changes.
+A push to the branch the VM has checked out updates its work tree, and is
+refused while that has uncommitted changes.
 
 The commits come from the VM. Review them before building or running them on
 the host.`,
 	}
-	var repo, branch string
-	cmd.PersistentFlags().StringVarP(&repo, "repo", "r", "", "VM repository: folder name in ~/.t3/projects, or absolute path")
-	cmd.PersistentFlags().StringVarP(&branch, "branch", "b", "", "VM branch (default: the current branch)")
-	for _, push := range []bool{false, true} {
-		use, short := "pull", "Fast-forward the current branch to the VM branch"
-		if push {
-			use, short = "push", "Push HEAD to the VM branch"
-		}
-		cmd.AddCommand(&cobra.Command{
-			Use:   use,
-			Short: short,
-			Args:  cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return runGitSync(cmd.Context(), repo, branch, push)
-			},
-		})
+	remote := &cobra.Command{
+		Use:   "remote",
+		Short: "Manage git remotes for repositories in the VM",
 	}
+	remote.AddCommand(newGitRemoteAddCmd())
+	cmd.AddCommand(remote)
 	return cmd
 }
 
-func runGitSync(ctx context.Context, repo, branch string, push bool) error {
-	inst, err := instance()
-	if err != nil {
-		return err
+func newGitRemoteAddCmd() *cobra.Command {
+	var repo string
+	cmd := &cobra.Command{
+		Use:   "add [NAME]",
+		Short: "Add a remote (default name: t3jail) for a repository in the VM",
+		Long: `Add a git remote to this checkout for a repository in the VM: --repo (a
+folder name in the VM's ~/.t3/projects, or an absolute path in the VM), else
+the folder in ~/.t3/projects with the same name as this checkout.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := "t3jail"
+			if len(args) == 1 {
+				name = args[0]
+			}
+			wd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			return gitRemoteAdd(cmd.Context(), wd, name, repo)
+		},
 	}
-	if err := inst.Ensure(); err != nil {
-		return err
-	}
-	bindings, err := gitrepos.Load(inst.GitRepos())
-	if err != nil {
-		return err
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	t, err := resolveGitTarget(ctx, wd, bindings, repo, branch)
-	if err != nil {
-		return err
-	}
-	sshCmd, err := gitSSH(inst)
-	if err != nil {
-		return err
-	}
-	if err := t.sync(ctx, sshCmd, push); err != nil {
-		return err
-	}
-	return saveGitBinding(inst, t.hostRoot, t.repo)
+	cmd.Flags().StringVarP(&repo, "repo", "r", "", "VM repository: folder name in ~/.t3/projects, or absolute path")
+	return cmd
 }
 
-// gitTarget is what one pull or push syncs.
-type gitTarget struct {
-	hostRoot       string // top-level directory of the host checkout
-	repo           string // as given to --repo
-	guestPath      string // gitrepos.GuestPath(repo)
-	branch         string // VM branch
-	explicitBranch bool   // branch came from --branch
-}
-
-func resolveGitTarget(ctx context.Context, dir string, bindings gitrepos.Bindings, repo, branch string) (gitTarget, error) {
+func gitRemoteAdd(ctx context.Context, dir, name, repo string) error {
 	root, err := hostGit(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return gitTarget{}, errors.New("not in a git checkout")
+		return errors.New("not in a git checkout")
 	}
-	root = filepath.Clean(root)
-	current, err := hostGit(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil {
-		return gitTarget{}, errors.New("HEAD is detached; check out the branch to pull into or push from")
-	}
-
 	if repo == "" {
-		if bound, ok := bindings.Lookup(root); ok {
-			repo = bound
-		} else {
-			repo = filepath.Base(root)
-		}
+		repo = filepath.Base(root)
 	}
 	guestPath, err := gitrepos.GuestPath(repo)
 	if err != nil {
-		return gitTarget{}, fmt.Errorf("%w; pass --repo", err)
+		return fmt.Errorf("%w; pass --repo", err)
 	}
-
-	t := gitTarget{hostRoot: root, repo: repo, guestPath: guestPath, branch: branch, explicitBranch: branch != ""}
-	if !t.explicitBranch {
-		t.branch = current
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("invalid remote name %q", name)
 	}
-	if strings.HasPrefix(t.branch, "-") {
-		return gitTarget{}, fmt.Errorf("invalid branch name %q", t.branch)
-	}
-	if _, err := hostGit(ctx, root, "check-ref-format", "refs/heads/"+t.branch); err != nil {
-		return gitTarget{}, fmt.Errorf("invalid branch name %q", t.branch)
-	}
-	return t, nil
-}
-
-func (t gitTarget) sync(ctx context.Context, sshCmd string, push bool) error {
-	url := sshx.HostAlias + ":" + t.guestPath
-	sshOpt := "core.sshCommand=" + sshCmd
-	where := gitrepos.Display(t.guestPath)
-	fmt.Printf("VM repository %s, branch %s\n", where, t.branch)
-
-	exists, err := vmHasBranch(ctx, t.hostRoot, sshOpt, url, t.branch)
-	if err != nil {
-		return fmt.Errorf("cannot read %s in the VM (is the VM running, and is it a git repository? Otherwise pass --repo): %w", where, err)
-	}
-	if !exists && (!push || !t.explicitBranch) {
-		hint := ""
-		if !t.explicitBranch {
-			hint = "; pass --branch"
-		}
-		return fmt.Errorf("%s in the VM has no branch %q%s", where, t.branch, hint)
-	}
-
-	tracking := vmRefPrefix + t.branch
-	if push {
-		if err := runGit(ctx, t.hostRoot, "-c", sshOpt, "push", "--receive-pack="+receivePack, url, "HEAD:refs/heads/"+t.branch); err != nil {
-			return err
-		}
-		return runGit(ctx, t.hostRoot, "update-ref", tracking, "HEAD")
-	}
-	if err := runGit(ctx, t.hostRoot, "-c", sshOpt, "fetch", url, "+refs/heads/"+t.branch+":"+tracking); err != nil {
+	if err := runGit(ctx, root, "remote", "add", name, "t3jail::"+repo); err != nil {
 		return err
 	}
-	return runGit(ctx, t.hostRoot, "merge", "--ff-only", tracking)
+	fmt.Printf("Added remote %s for %s in the VM.\n", name, gitrepos.Display(guestPath))
+	if _, err := exec.LookPath(gitRemoteHelper); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s is not on PATH, and git needs it for this remote. Install t3jail's package (nix run does not put it on PATH).\n", gitRemoteHelper)
+	}
+	return nil
 }
 
-// vmHasBranch asks the VM repository whether it has branch.
-func vmHasBranch(ctx context.Context, dir, sshOpt, url, branch string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "-c", sshOpt, "ls-remote", "--heads", url, "refs/heads/"+branch)
-	cmd.Stderr = termsafe.Writer{W: os.Stderr}
-	out, err := cmd.Output()
-	if err != nil {
-		return false, err
+func newGitRemoteHelperCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "__git-remote <remote> <repo>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// git passes the URL without its "t3jail::" prefix.
+			guestPath, err := gitrepos.GuestPath(args[1])
+			if err != nil {
+				return err
+			}
+			inst, err := instance()
+			if err != nil {
+				return err
+			}
+			if err := inst.Ensure(); err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			st, err := control.NewClient(inst.ControlSocket()).Status(ctx)
+			cancel()
+			if err != nil {
+				return errors.New("the VM is not running; start it with `t3jail start`")
+			}
+			if st.Rescue {
+				return errors.New("the VM is running the rescue system")
+			}
+			ssh, err := sshArgv(inst)
+			if err != nil {
+				return err
+			}
+			return serveGitRemote(cmd.Context(), os.Stdin, os.Stdout, ssh, guestPath)
+		},
 	}
-	for line := range strings.Lines(string(out)) {
-		if _, ref, ok := strings.Cut(strings.TrimSpace(line), "\t"); ok && ref == "refs/heads/"+branch {
-			return true, nil
+}
+
+// serveGitRemote speaks git's remote helper protocol (gitremote-helpers(7))
+// on in and out. It offers only "connect": git asks for a service such as
+// git-upload-pack, and from then on in and out are connected to that service
+// running in the VM, reached by running the ssh argv with the command
+// appended. git itself then does everything a fetch or push needs.
+func serveGitRemote(ctx context.Context, in, out *os.File, ssh []string, guestPath string) error {
+	r := bufio.NewReader(in)
+	for {
+		line, err := r.ReadString('\n')
+		if errors.Is(err, io.EOF) && line == "" {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		line = strings.TrimSuffix(line, "\n")
+		switch service, isConnect := strings.CutPrefix(line, "connect "); {
+		case line == "":
+			return nil
+		case line == "capabilities":
+			if _, err := io.WriteString(out, "connect\n\n"); err != nil {
+				return err
+			}
+		case isConnect:
+			remoteCmd, ok := gitServices[service]
+			if !ok {
+				return fmt.Errorf("unsupported service %q", service)
+			}
+			// The service reads in directly, so nothing may sit in r's buffer.
+			// git sends no data before the reply below.
+			if r.Buffered() > 0 {
+				return errors.New("git sent data before the connection was set up")
+			}
+			if _, err := io.WriteString(out, "\n"); err != nil {
+				return err
+			}
+			cmd := exec.CommandContext(ctx, ssh[0], append(ssh[1:], remoteCmd+" "+shellQuote(guestPath))...)
+			cmd.Stdin, cmd.Stdout = in, out
+			cmd.Stderr = termsafe.Writer{W: os.Stderr}
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("%s in the VM (%s): %w", service, gitrepos.Display(guestPath), err)
+			}
+			return nil
+		default:
+			return fmt.Errorf("unsupported remote helper command %q", line)
 		}
 	}
-	return false, nil
 }
 
 // hostGit runs a git command in the host checkout and returns its trimmed
@@ -194,24 +201,4 @@ func vmHasBranch(ctx context.Context, dir, sshOpt, url, branch string) (bool, er
 func hostGit(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output()
 	return strings.TrimSpace(string(out)), err
-}
-
-func saveGitBinding(inst paths.Instance, hostRoot, repo string) error {
-	unlock, err := lockRuntime(inst, "git-repos.lock")
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	b, err := gitrepos.Load(inst.GitRepos())
-	if err != nil {
-		return err
-	}
-	if !b.Set(hostRoot, repo) {
-		return nil
-	}
-	if err := b.Save(inst.GitRepos()); err != nil {
-		return err
-	}
-	fmt.Printf("This checkout now syncs with %s in the VM by default.\n", repo)
-	return nil
 }

@@ -83,7 +83,6 @@ func (i Instance) SSHConfig() string   { return filepath.Join(i.SSHDir(), "confi
 func (i Instance) KnownHosts() string  { return filepath.Join(i.SSHDir(), "known_hosts") }
 func (i Instance) MountsFile() string  { return filepath.Join(i.State, "mounts.toml") }
 func (i Instance) PortsFile() string   { return filepath.Join(i.State, "ports.toml") }
-func (i Instance) GitRepos() string    { return filepath.Join(i.State, "git-repos.toml") }
 func (i Instance) NixOSConfig() string { return filepath.Join(i.State, "nixos-config") }
 func (i Instance) GCRoots() string     { return filepath.Join(i.State, "gcroots") }
 func (i Instance) Logs() string        { return filepath.Join(i.State, "logs") }

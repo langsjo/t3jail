@@ -65,6 +65,9 @@ buildGoModule {
       --set-default T3JAIL_FIRMWARE ${OVMF-cloud-hypervisor.fd}/FV/CLOUDHV.fd \
       ${setDrv "T3JAIL_IMAGE_DRV" guest-image} \
       ${setDrv "T3JAIL_RESCUE_DRV" rescue}
+
+    # git runs this for t3jail::<repo> remote URLs.
+    makeWrapper $out/bin/t3jail $out/bin/git-remote-t3jail --add-flags __git-remote
   '';
 
   meta = {

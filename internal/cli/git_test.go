@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,16 +12,45 @@ import (
 	"github.com/langsjo/t3jail/internal/gitrepos"
 )
 
-// gitFixture is a host checkout and a "VM" repository in a fake home,
-// reached through a fake ssh that runs git's remote command locally there.
+// envFakeSSH makes the test binary act as git-remote-t3jail, reaching the
+// "VM" through the fake ssh it names.
+const envFakeSSH = "T3JAIL_TEST_FAKE_SSH"
+
+func TestMain(m *testing.M) {
+	if ssh := os.Getenv(envFakeSSH); ssh != "" {
+		os.Exit(fakeGitRemoteHelper(ssh))
+	}
+	os.Exit(m.Run())
+}
+
+// fakeGitRemoteHelper is __git-remote without the instance and VM checks.
+func fakeGitRemoteHelper(ssh string) int {
+	err := func() error {
+		if len(os.Args) != 3 {
+			return fmt.Errorf("usage: %s <remote> <repo>", os.Args[0])
+		}
+		guestPath, err := gitrepos.GuestPath(os.Args[2])
+		if err != nil {
+			return err
+		}
+		return serveGitRemote(context.Background(), os.Stdin, os.Stdout, []string{ssh}, guestPath)
+	}()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "t3jail:", err)
+		return 1
+	}
+	return 0
+}
+
+// gitFixture is a host checkout and a "VM" repository in a fake home. git
+// reaches the VM through the remote helper, which runs the remote command
+// locally in the fake home instead of over ssh.
 type gitFixture struct {
-	t       *testing.T
-	ctx     context.Context
-	vmHome  string
-	vmRepo  string // ~/.t3/projects/proj in the fake home
-	host    string // host checkout, also named proj
-	sshCmd  string
-	noBound gitrepos.Bindings
+	t      *testing.T
+	ctx    context.Context
+	dir    string
+	vmRepo string // ~/.t3/projects/proj in the fake home
+	host   string // host checkout, also named proj
 }
 
 func newGitFixture(t *testing.T) *gitFixture {
@@ -35,34 +65,58 @@ func newGitFixture(t *testing.T) *gitFixture {
 	t.Setenv("GIT_COMMITTER_NAME", "test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
-	f := &gitFixture{t: t, ctx: context.Background(), vmHome: filepath.Join(dir, "vm")}
-	f.vmRepo = filepath.Join(f.vmHome, gitrepos.ProjectsDir, "proj")
+	vmHome := filepath.Join(dir, "vm")
+	f := &gitFixture{t: t, ctx: context.Background(), dir: dir}
+	f.vmRepo = filepath.Join(vmHome, gitrepos.ProjectsDir, "proj")
 	f.host = filepath.Join(dir, "host", "proj")
 
-	f.sshCmd = filepath.Join(dir, "fake-ssh")
-	// git runs `<sshCommand> [options] t3jail '<remote command>'`.
+	// The helper runs `<ssh> '<remote command>'`.
+	fakeSSH := filepath.Join(dir, "fake-ssh")
 	script := "#!/bin/sh\nfor last; do :; done\ncd \"$FAKE_VM_HOME\" && exec sh -c \"$last\"\n"
-	if err := os.WriteFile(f.sshCmd, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(fakeSSH, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FAKE_VM_HOME", f.vmHome)
+	t.Setenv("FAKE_VM_HOME", vmHome)
+	t.Setenv(envFakeSSH, fakeSSH)
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(self, filepath.Join(bin, gitRemoteHelper)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	f.git(filepath.Dir(f.vmRepo), "init", "-q", "-b", "main", f.vmRepo)
 	f.commit(f.vmRepo, "a")
-	f.git(filepath.Dir(f.host), "clone", "-q", f.vmRepo, f.host)
+	f.git(filepath.Dir(f.host), "init", "-q", "-b", "main", f.host)
+	if err := gitRemoteAdd(f.ctx, f.host, "t3jail", ""); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
 func (f *gitFixture) git(dir string, args ...string) string {
 	f.t.Helper()
+	out, err := f.tryGit(dir, args...)
+	if err != nil {
+		f.t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return out
+}
+
+func (f *gitFixture) tryGit(dir string, args ...string) (string, error) {
+	f.t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.t.Fatal(err)
 	}
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		f.t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), err
 }
 
 func (f *gitFixture) commit(dir, name string) {
@@ -74,35 +128,31 @@ func (f *gitFixture) commit(dir, name string) {
 	f.git(dir, "commit", "-q", "-m", name)
 }
 
-func (f *gitFixture) sync(repo, branch string, push bool) error {
-	f.t.Helper()
-	t, err := resolveGitTarget(f.ctx, f.host, f.noBound, repo, branch)
-	if err != nil {
-		return err
-	}
-	return t.sync(f.ctx, f.sshCmd, push)
-}
-
-func TestGitPullFastForwards(t *testing.T) {
+func TestGitRemoteFetchAndClone(t *testing.T) {
 	f := newGitFixture(t)
-	f.commit(f.vmRepo, "b")
-	if err := f.sync("", "", false); err != nil {
-		t.Fatal(err)
+	f.git(f.vmRepo, "tag", "v1")
+	f.git(f.vmRepo, "branch", "other")
+
+	f.git(f.host, "fetch", "-q", "t3jail")
+	vmHead := f.git(f.vmRepo, "rev-parse", "HEAD")
+	for _, ref := range []string{"t3jail/main", "t3jail/other", "v1"} {
+		if got := f.git(f.host, "rev-parse", ref); got != vmHead {
+			t.Errorf("%s = %s, want %s", ref, got, vmHead)
+		}
 	}
-	if got, want := f.git(f.host, "rev-parse", "HEAD"), f.git(f.vmRepo, "rev-parse", "HEAD"); got != want {
-		t.Errorf("host HEAD %s, want the VM's %s", got, want)
-	}
-	if got := f.git(f.host, "rev-parse", "refs/remotes/t3jail/main"); got != f.git(f.vmRepo, "rev-parse", "HEAD") {
-		t.Errorf("tracking ref not updated: %s", got)
+
+	clone := filepath.Join(f.dir, "clone")
+	f.git(f.dir, "clone", "-q", "t3jail::proj", clone)
+	if got := f.git(clone, "rev-parse", "HEAD"); got != vmHead {
+		t.Errorf("clone HEAD %s, want %s", got, vmHead)
 	}
 }
 
-func TestGitPushUpdatesCheckedOutBranch(t *testing.T) {
+func TestGitRemotePushUpdatesCheckedOutBranch(t *testing.T) {
 	f := newGitFixture(t)
+	f.git(f.host, "pull", "-q", "t3jail", "main")
 	f.commit(f.host, "b")
-	if err := f.sync("", "", true); err != nil {
-		t.Fatal(err)
-	}
+	f.git(f.host, "push", "-q", "t3jail", "main")
 	if got, want := f.git(f.vmRepo, "rev-parse", "HEAD"), f.git(f.host, "rev-parse", "HEAD"); got != want {
 		t.Errorf("VM HEAD %s, want %s", got, want)
 	}
@@ -113,91 +163,52 @@ func TestGitPushUpdatesCheckedOutBranch(t *testing.T) {
 	if got := f.git(f.vmRepo, "status", "--porcelain"); got != "" {
 		t.Errorf("VM work tree dirty after push: %q", got)
 	}
+
+	f.git(f.host, "push", "-q", "t3jail", "HEAD:feature")
+	f.git(f.vmRepo, "rev-parse", "--verify", "-q", "refs/heads/feature")
+	f.git(f.host, "push", "-q", "t3jail", ":feature")
+	if _, err := f.tryGit(f.vmRepo, "rev-parse", "--verify", "-q", "refs/heads/feature"); err == nil {
+		t.Error("branch not deleted in the VM")
+	}
 }
 
-func TestGitPushRefusedOverDirtyVMTree(t *testing.T) {
+func TestGitRemotePushRefusedOverDirtyVMTree(t *testing.T) {
 	f := newGitFixture(t)
+	f.git(f.host, "pull", "-q", "t3jail", "main")
 	if err := os.WriteFile(filepath.Join(f.vmRepo, "a"), []byte("edited in the VM\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.commit(f.host, "b")
-	if err := f.sync("", "", true); err == nil {
-		t.Fatal("push over uncommitted VM changes succeeded")
+	if out, err := f.tryGit(f.host, "push", "t3jail", "main"); err == nil {
+		t.Fatalf("push over uncommitted VM changes succeeded:\n%s", out)
 	}
 }
 
-func TestGitMissingBranchNeedsFlag(t *testing.T) {
+func TestGitRemoteAdd(t *testing.T) {
 	f := newGitFixture(t)
-	f.git(f.host, "switch", "-q", "-c", "feature")
-	f.commit(f.host, "b")
-	for _, push := range []bool{false, true} {
-		err := f.sync("", "", push)
-		if err == nil || !strings.Contains(err.Error(), "--branch") {
-			t.Errorf("push=%v: err = %v, want a hint to pass --branch", push, err)
-		}
+	if got := f.git(f.host, "remote", "get-url", "t3jail"); got != "t3jail::proj" {
+		t.Errorf("default remote URL %q", got)
 	}
-	// An explicit branch still has to exist for pull, but push creates it.
-	if err := f.sync("", "feature", false); err == nil {
-		t.Error("pull of a missing explicit branch succeeded")
-	}
-	if err := f.sync("", "feature", true); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := f.git(f.vmRepo, "rev-parse", "feature"), f.git(f.host, "rev-parse", "HEAD"); got != want {
-		t.Errorf("VM feature %s, want %s", got, want)
-	}
-}
 
-func TestGitExplicitBranchPullsIntoCurrent(t *testing.T) {
-	f := newGitFixture(t)
-	f.git(f.vmRepo, "branch", "other")
-	f.git(f.host, "switch", "-q", "-c", "local")
-	if err := f.sync("", "other", false); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.git(f.host, "rev-parse", "--abbrev-ref", "HEAD"); got != "local" {
-		t.Errorf("current branch changed to %s", got)
-	}
-}
-
-func TestResolveGitTarget(t *testing.T) {
-	f := newGitFixture(t)
 	sub := filepath.Join(f.host, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-
-	got, err := resolveGitTarget(f.ctx, sub, f.noBound, "", "")
-	if err != nil {
+	if err := gitRemoteAdd(f.ctx, sub, "vm", "/etc/nixos"); err != nil {
 		t.Fatal(err)
 	}
-	if got.hostRoot != f.host || got.repo != "proj" || got.guestPath != ".t3/projects/proj" || got.branch != "main" || got.explicitBranch {
-		t.Errorf("defaults: %+v", got)
+	if got := f.git(f.host, "remote", "get-url", "vm"); got != "t3jail::/etc/nixos" {
+		t.Errorf("--repo remote URL %q", got)
 	}
 
-	var bound gitrepos.Bindings
-	bound.Set(f.host, "/srv/repo")
-	if got, err := resolveGitTarget(f.ctx, f.host, bound, "", ""); err != nil || got.guestPath != "/srv/repo" {
-		t.Errorf("binding not used: %+v, %v", got, err)
-	}
-	if got, err := resolveGitTarget(f.ctx, f.host, bound, "other", "x"); err != nil || got.guestPath != ".t3/projects/other" || got.branch != "x" || !got.explicitBranch {
-		t.Errorf("flags not preferred: %+v, %v", got, err)
-	}
-
-	for _, branch := range []string{"-x", "a..b", "a b"} {
-		if _, err := resolveGitTarget(f.ctx, f.host, f.noBound, "", branch); err == nil {
-			t.Errorf("branch %q accepted", branch)
+	for name, call := range map[string]func() error{
+		"existing remote": func() error { return gitRemoteAdd(f.ctx, f.host, "t3jail", "") },
+		"bad repo":        func() error { return gitRemoteAdd(f.ctx, f.host, "x", "a/b") },
+		"bad name":        func() error { return gitRemoteAdd(f.ctx, f.host, "-x", "") },
+		"no checkout":     func() error { return gitRemoteAdd(f.ctx, t.TempDir(), "x", "") },
+	} {
+		if err := call(); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
-	}
-	if _, err := resolveGitTarget(f.ctx, f.host, f.noBound, "a/b", ""); err == nil {
-		t.Error("repo a/b accepted")
-	}
-
-	f.git(f.host, "switch", "-q", "--detach")
-	if _, err := resolveGitTarget(f.ctx, f.host, f.noBound, "", ""); err == nil {
-		t.Error("detached HEAD accepted")
-	}
-	if _, err := resolveGitTarget(f.ctx, t.TempDir(), f.noBound, "", ""); err == nil {
-		t.Error("directory outside a checkout accepted")
 	}
 }

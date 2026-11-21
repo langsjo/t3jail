@@ -38,6 +38,7 @@ func NewRoot() *cobra.Command {
 		newResizeCmd(),
 		newConfigCmd(),
 		newGitCmd(),
+		newGitRemoteHelperCmd(),
 		newDiskCmd(),
 		newPortCmd(),
 		newDaemonCmd(),
