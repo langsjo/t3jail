@@ -61,6 +61,9 @@ func TestRenderConfigQuoting(t *testing.T) {
 		`ProxyCommand /nix/store/x-t3jail/bin/t3jail __vsock-proxy 22 'it'\''s'`,
 		"User agent",
 		"StrictHostKeyChecking accept-new",
+		"PasswordAuthentication no",
+		"KbdInteractiveAuthentication no",
+		"BatchMode yes",
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("config lacks %q:\n%s", want, cfg)

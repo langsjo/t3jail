@@ -77,6 +77,12 @@ func RenderConfig(p ConfigParams) string {
 		"  IdentityFile " + configQuote(p.KeyPath),
 		"  IdentitiesOnly yes",
 		"  IdentityAgent none",
+		// The guest's sshd is agent-controlled. Never let it make ssh prompt
+		// on the terminal, e.g. for a password.
+		"  PreferredAuthentications publickey",
+		"  PasswordAuthentication no",
+		"  KbdInteractiveAuthentication no",
+		"  BatchMode yes",
 		"  ProxyCommand " + strings.Join(quoted, " "),
 		"  UserKnownHostsFile " + configQuote(p.KnownHosts),
 		"  StrictHostKeyChecking accept-new",
