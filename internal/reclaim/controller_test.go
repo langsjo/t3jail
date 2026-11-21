@@ -30,7 +30,7 @@ func TestControllerBackoff(t *testing.T) {
 		refaults uint64
 	}{
 		{name: "stall", stall: 10_001},
-		{name: "refaults", refaults: 257},
+		{name: "refaults", refaults: 525},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := &fakeSource{sample: Sample{FileCacheKiB: 1024 * 1024}}
@@ -80,7 +80,6 @@ func TestControllerCacheFloorAndStep(t *testing.T) {
 				t.Fatal(err)
 			}
 			src.sample.StallUS = 10_000
-			src.sample.RefaultPages = 256
 			if err := c.Tick(start.Add(10 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +90,7 @@ func TestControllerCacheFloorAndStep(t *testing.T) {
 	}
 }
 
-func TestControllerBackoffScalesWithInterval(t *testing.T) {
+func TestControllerStallLimitScalesWithInterval(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		stallUS uint64
@@ -118,25 +117,28 @@ func TestControllerBackoffScalesWithInterval(t *testing.T) {
 	}
 }
 
-func TestControllerRefaultLimitScalesWithInterval(t *testing.T) {
-	// 1 MiB per 10 s is 2160 MiB over six hours, or 552960 4 KiB pages.
+func TestControllerRefaultLimitFollowsStep(t *testing.T) {
+	// The limit is a tenth of the 2% step, in 4 KiB pages.
 	for _, tc := range []struct {
 		name     string
+		cacheKiB uint64
 		refaults uint64
 		want     []uint64
 	}{
-		{name: "at the limit", refaults: 552960, want: []uint64{20971}},
-		{name: "over the limit", refaults: 552961},
+		{name: "3 GiB cache at the limit", cacheKiB: 3 << 20, refaults: 1572, want: []uint64{62914}},
+		{name: "3 GiB cache over the limit", cacheKiB: 3 << 20, refaults: 1573},
+		{name: "300 MiB cache at the limit", cacheKiB: 300 << 10, refaults: 153, want: []uint64{6144}},
+		{name: "300 MiB cache over the limit", cacheKiB: 300 << 10, refaults: 154},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := &fakeSource{sample: Sample{FileCacheKiB: 1024 * 1024}}
-			c := NewController(src, 256*1024, 4096, 6*time.Hour)
+			src := &fakeSource{sample: Sample{FileCacheKiB: tc.cacheKiB}}
+			c := NewController(src, 256*1024, 4096, 10*time.Second)
 			start := time.Unix(0, 0)
 			if err := c.Tick(start); err != nil {
 				t.Fatal(err)
 			}
 			src.sample.RefaultPages = tc.refaults
-			if err := c.Tick(start.Add(6 * time.Hour)); err != nil {
+			if err := c.Tick(start.Add(10 * time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(src.requests, tc.want) {

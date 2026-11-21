@@ -28,7 +28,7 @@ in
       description = ''
         Seconds between samples of memory pressure, file refaults and file
         cache size. Each sample may reclaim 2% of the file cache, so a longer
-        interval drains more slowly. The backoff limits scale with it.
+        interval drains more slowly. The memory stall limit scales with it.
       '';
       type = lib.types.ints.positive;
       default = 10;
