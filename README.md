@@ -163,12 +163,14 @@ their own VMs. The host's `kvm_intel` or `kvm_amd` module must have nested
 virtualization enabled (`nested=1`, the default on recent kernels); `start`
 checks this. It applies from the next start, and never to the rescue system.
 
-The VM hands RAM it isn't using back to the host (free page reporting), and
-can take it again whenever it needs it. Linux fills spare RAM with page cache,
-so the guest also drops cache nobody has touched for two minutes
-(`t3jail.memoryReclaim` in the VM's configuration). Set
-`free_page_reporting = false` in config.toml to turn reporting off from the
-next start.
+The VM hands unused RAM back to the host in blocks of 64 KiB or larger
+(virtio free page reporting) and can reuse it whenever needed. With reporting
+active, the guest requests reclaim of 2% of its file cache every 10 seconds
+while keeping a 256 MiB floor. Reclaim pauses for a minute when memory stalls
+or file refaults spike. Configure it under `t3jail.memoryReclaim` in the guest.
+Set `free_page_reporting = false` in host config.toml to turn reporting off
+from the next start. Changes to the guest's
+`page_reporting.page_reporting_order` kernel parameter take effect on reboot.
 
 ### The VM's own configuration
 

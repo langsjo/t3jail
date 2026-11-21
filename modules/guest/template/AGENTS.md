@@ -9,9 +9,13 @@ may change it.
   mounts. Do not remove it: the host loses access to the VM without it.
 - `platform.nix`: the VM's CPU architecture. Leave it alone.
 
-The guest reclaims cold page cache by default. In `configuration.nix`, set
-`t3jail.memoryReclaim.enable = false;` to disable it or change
-`t3jail.memoryReclaim.minAge` from its default of 120 seconds.
+With virtio free page reporting active, the guest reclaims file cache in
+small steps and pauses when memory stalls or file refaults spike. In
+`configuration.nix`, set `t3jail.memoryReclaim.enable = false;` to disable it
+or adjust `interval` (default 10 seconds) and `keepCacheMiB` (default 256 MiB)
+under the same option. The guest reports free blocks of 64 KiB or larger.
+Changes to the `page_reporting.page_reporting_order` kernel parameter take
+effect on reboot.
 
 Apply changes:
 

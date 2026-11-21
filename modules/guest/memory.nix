@@ -1,55 +1,73 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
   cfg = config.t3jail.memoryReclaim;
-  params = "/sys/module/damon_reclaim/parameters";
-  skipAnon = config.swapDevices == [ ] && !config.zramSwap.enable;
+  reclaim = pkgs.callPackage ../../packages/reclaim.nix { };
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [ "t3jail" "memoryReclaim" "minAge" ] ''
+      The guest now uses memory pressure and file refaults to pace reclaim.
+      Use t3jail.memoryReclaim.interval and t3jail.memoryReclaim.keepCacheMiB
+      to set the sampling interval and file cache floor.
+    '')
+  ];
+
   options.t3jail.memoryReclaim = {
     enable = lib.mkOption {
-      description = "Whether to reclaim cold guest memory with DAMON_RECLAIM.";
+      description = "Whether to reclaim guest file cache when free page reporting is active.";
       type = lib.types.bool;
       default = true;
     };
 
-    minAge = lib.mkOption {
-      description = "Seconds a page must go untouched before DAMON_RECLAIM can reclaim it.";
+    interval = lib.mkOption {
+      description = ''
+        Seconds between samples of memory pressure, file refaults and file
+        cache size. Each sample may reclaim 2% of the file cache, so a longer
+        interval drains more slowly. The backoff limits scale with it.
+      '';
       type = lib.types.ints.positive;
-      default = 120;
+      default = 10;
+    };
+
+    keepCacheMiB = lib.mkOption {
+      description = "Floor in MiB of total file cache when sizing a reclaim request.";
+      type = lib.types.ints.unsigned;
+      default = 256;
     };
   };
 
   config = lib.mkIf cfg.enable {
-    # The guest disk is a raw file, so reads of reclaimed guest page cache
-    # can usually be served from the host's page cache.
-    systemd.services.damon-reclaim = {
-      description = "Reclaim cold guest memory with DAMON";
+    systemd.services.memory-reclaim = {
+      description = "Reclaim guest file cache between bursts of memory pressure";
       wantedBy = [ "multi-user.target" ];
+      unitConfig.ConditionPathExists = "/sys/fs/cgroup/memory.reclaim";
       serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
+        ExecStart = "${reclaim}/bin/t3jail-reclaim --interval=${toString cfg.interval}s --keep-cache-mib=${toString cfg.keepCacheMiB}";
+        Nice = 19;
+        IOSchedulingClass = "best-effort";
+        IOSchedulingPriority = 7;
+        Restart = "on-failure";
+        RestartSec = "30s";
+
+        # It only reads /proc and /sys and writes memory.reclaim, which needs
+        # no capabilities.
+        CapabilityBoundingSet = "";
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        PrivateNetwork = true;
+        RestrictAddressFamilies = "none";
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
       };
-      script = ''
-        cd ${params}
-        echo ${toString (cfg.minAge * 1000000)} > min_age
-        # Keep reclaim active even when page cache fills most of RAM.
-        echo 1000 > wmarks_high
-        echo 1000 > wmarks_mid
-        echo 0 > wmarks_low
-        echo ${if skipAnon then "Y" else "N"} > skip_anon
-        if [ "$(cat enabled)" = Y ]; then
-          echo Y > commit_inputs
-        else
-          echo Y > enabled
-        fi
-      '';
-      preStop = ''
-        echo N > ${params}/enabled
-      '';
     };
   };
 }
