@@ -184,6 +184,25 @@ func TestGitRemotePushRefusedOverDirtyVMTree(t *testing.T) {
 	}
 }
 
+func TestGitRemoteMasksVMOutput(t *testing.T) {
+	f := newGitFixture(t)
+	f.git(f.host, "pull", "-q", "t3jail", "main")
+	// git masks C0 controls in remote: messages itself, but not an 8-bit
+	// CSI encoded as UTF-8.
+	hook := filepath.Join(f.vmRepo, ".git", "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf 'evil \\302\\2332J\\n' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.commit(f.host, "b")
+	out, err := f.tryGit(f.host, "push", "t3jail", "main")
+	if err == nil {
+		t.Fatal("push past a rejecting hook succeeded")
+	}
+	if !strings.Contains(out, "evil ??2J") || strings.Contains(out, "\u009b") {
+		t.Errorf("hook output not masked:\n%q", out)
+	}
+}
+
 func TestGitRemoteAdd(t *testing.T) {
 	f := newGitFixture(t)
 	if got := f.git(f.host, "remote", "get-url", "t3jail"); got != "t3jail::proj" {

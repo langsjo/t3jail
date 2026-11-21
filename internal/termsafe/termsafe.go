@@ -6,6 +6,7 @@ package termsafe
 import (
 	"bytes"
 	"io"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -36,6 +37,24 @@ func Escape(b []byte) []byte {
 }
 
 const hex = "0123456789abcdef"
+
+// Mask is Escape for text inside a binary protocol, where lengths must not
+// change: in place, it overwrites every byte of a control character (other
+// than newline, tab and those in keep) and every invalid UTF-8 byte with '?'.
+func Mask(b []byte, keep string) {
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		bad := r == utf8.RuneError && size == 1 ||
+			(r < 0x20 || r == 0x7f || r >= 0x80 && r < 0xa0) &&
+				r != '\n' && r != '\t' && !strings.ContainsRune(keep, r)
+		if bad {
+			for j := range size {
+				b[i+j] = '?'
+			}
+		}
+		i += size
+	}
+}
 
 // Writer escapes everything written through it.
 type Writer struct{ W io.Writer }

@@ -151,7 +151,8 @@ func newGitRemoteHelperCmd() *cobra.Command {
 // on in and out. It offers only "connect": git asks for a service such as
 // git-upload-pack, and from then on in and out are connected to that service
 // running in the VM, reached by running the ssh argv with the command
-// appended. git itself then does everything a fetch or push needs.
+// appended. git itself then does everything a fetch or push needs. What the
+// service sends goes through filterGitWire.
 func serveGitRemote(ctx context.Context, in, out *os.File, ssh []string, guestPath string) error {
 	r := bufio.NewReader(in)
 	for {
@@ -184,10 +185,24 @@ func serveGitRemote(ctx context.Context, in, out *os.File, ssh []string, guestPa
 				return err
 			}
 			cmd := exec.CommandContext(ctx, ssh[0], append(ssh[1:], remoteCmd+" "+shellQuote(guestPath))...)
-			cmd.Stdin, cmd.Stdout = in, out
+			cmd.Stdin = in
 			cmd.Stderr = termsafe.Writer{W: os.Stderr}
-			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("%s in the VM (%s): %w", service, gitrepos.Display(guestPath), err)
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return err
+			}
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			filterErr := filterGitWire(out, stdout, service != "git-receive-pack")
+			if filterErr != nil {
+				_ = cmd.Process.Kill()
+			}
+			if err := cmd.Wait(); filterErr == nil && err != nil {
+				filterErr = err
+			}
+			if filterErr != nil {
+				return fmt.Errorf("%s in the VM (%s): %w", service, gitrepos.Display(guestPath), filterErr)
 			}
 			return nil
 		default:

@@ -20,3 +20,21 @@ func TestEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestMask(t *testing.T) {
+	cases := map[string]string{
+		"plain\ttext\n":             "plain\ttext\n",
+		"\x1b]52;c;aGk=\x07\x1b[2J": "?]52;c;aGk=??[2J",
+		"ünïcödé ✓":                 "ünïcödé ✓",
+		"bad\xffbyte":               "bad?byte",
+		"c1 \u009b2J":               "c1 ??2J",
+		"cr\r nul\x00":              "cr\r nul?",
+	}
+	for in, want := range cases {
+		b := []byte(in)
+		Mask(b, "\r")
+		if string(b) != want {
+			t.Errorf("Mask(%q) = %q, want %q", in, b, want)
+		}
+	}
+}

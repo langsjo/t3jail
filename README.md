@@ -255,9 +255,9 @@ host:
 2. **`config pull` and `t3jail::` remotes.** What you fetch is written by
    agents. Git transfers neither hooks nor `.git/config`, but review the
    commits before building or running them, evaluating them with Nix or
-   allowing them with direnv on the host. git prints the VM's `remote:`
-   messages itself; it masks control characters in them other than colors,
-   so keep `sideband.allowControlCharacters` at its default.
+   allowing them with direnv on the host. The remote helper masks control
+   characters in everything git may print from the VM, such as ref names,
+   rejection reasons and `remote:` messages.
 3. **The desktop app** talks to a server the agents control. Keep the app's
    local environment off (the app lets you switch it back on), and
    keep T3's "linked environments" and T3 Connect off: they let one
