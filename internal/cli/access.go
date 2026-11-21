@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -62,10 +63,31 @@ func sshArgv(inst paths.Instance, args ...string) ([]string, error) {
 		ControlPath:  inst.SSHControlPath(),
 		ProxyCommand: []string{self, "__vsock-proxy", fmt.Sprint(guestabi.Get().VsockSSHPort)},
 	})
-	if err := os.WriteFile(inst.SSHConfig(), []byte(cfg), 0o600); err != nil {
+	if err := writeFileAtomic(inst.SSHConfig(), []byte(cfg)); err != nil {
 		return nil, err
 	}
 	return append([]string{"ssh", "-F", inst.SSHConfig(), sshx.HostAlias}, args...), nil
+}
+
+// writeFileAtomic replaces file with data (mode 0600). Concurrent t3jail
+// commands, such as git fetching from several t3jail:: remotes at once, may
+// rewrite the file while ssh reads it; ssh must see a complete one.
+func writeFileAtomic(file string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(file), filepath.Base(file)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), file)
+	}
+	if err != nil {
+		os.Remove(f.Name())
+	}
+	return err
 }
 
 func rescueRunning(inst paths.Instance) bool {

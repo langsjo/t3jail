@@ -80,3 +80,22 @@ func TestPrintFileFollowsAcrossRotation(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestWriteFileAtomic(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "config")
+	for _, content := range []string{"first\n", "second\n"} {
+		if err := writeFileAtomic(file, []byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(file); err != nil || string(got) != content {
+			t.Fatalf("content %q, %v; want %q", got, err, content)
+		}
+	}
+	if fi, err := os.Stat(file); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, %v", fi.Mode().Perm(), err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("temporary files left: %v", entries)
+	}
+}
