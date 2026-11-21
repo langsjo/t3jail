@@ -91,12 +91,16 @@ func gitRemoteAdd(ctx context.Context, dir, name, repo string) error {
 	if err != nil {
 		return errors.New("not in a git checkout")
 	}
-	if repo == "" {
+	inferred := repo == ""
+	if inferred {
 		repo = filepath.Base(root)
 	}
 	guestPath, err := gitrepos.GuestPath(repo)
-	if err != nil {
+	if err != nil && inferred {
 		return fmt.Errorf("%w; pass --repo", err)
+	}
+	if err != nil {
+		return err
 	}
 	if strings.HasPrefix(name, "-") {
 		return fmt.Errorf("invalid remote name %q", name)
@@ -115,7 +119,9 @@ func newGitRemoteHelperCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "__git-remote <remote> <repo>",
 		Hidden: true,
-		Args:   cobra.ExactArgs(2),
+		// The remote name and the URL are git's, never flags.
+		DisableFlagParsing: true,
+		Args:               cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// git passes the URL without its "t3jail::" prefix.
 			guestPath, err := gitrepos.GuestPath(args[1])
@@ -126,9 +132,6 @@ func newGitRemoteHelperCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := inst.Ensure(); err != nil {
-				return err
-			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			st, err := control.NewClient(inst.ControlSocket()).Status(ctx)
 			cancel()
@@ -137,6 +140,9 @@ func newGitRemoteHelperCmd() *cobra.Command {
 			}
 			if st.Rescue {
 				return errors.New("the VM is running the rescue system")
+			}
+			if err := inst.Ensure(); err != nil {
+				return err
 			}
 			ssh, err := sshArgv(inst)
 			if err != nil {

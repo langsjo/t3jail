@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -200,6 +201,19 @@ func TestGitRemoteMasksVMOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "evil ??2J") || strings.Contains(out, "\u009b") {
 		t.Errorf("hook output not masked:\n%q", out)
+	}
+}
+
+func TestGitRemoteHelperTakesNoFlags(t *testing.T) {
+	for _, args := range [][]string{{"origin", "--help"}, {"-vm", "-x"}} {
+		root := NewRoot()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetArgs(append([]string{"__git-remote"}, args...))
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "repository") || out.Len() > 0 {
+			t.Errorf("%v: err %v, output %q; want the repository rejected and nothing on stdout", args, err, out.String())
+		}
 	}
 }
 
