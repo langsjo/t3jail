@@ -67,6 +67,13 @@ in
         ];
         Restart = "always";
         RestartSec = "2s";
+        # The default OOMPolicy=stop terminates the whole unit when the kernel
+        # OOM killer takes any process in it, so one runaway agent CLI ends
+        # every session in the server. Agent CLIs raise their own
+        # oom_score_adj, so ranking the server below the default keeps it out
+        # of the kernel's way without making it unkillable.
+        OOMPolicy = "continue";
+        OOMScoreAdjust = -300;
       };
     };
 
